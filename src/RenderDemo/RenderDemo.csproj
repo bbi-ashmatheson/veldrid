@@ -14,6 +14,8 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <NuGetTargetMoniker>.NETCoreApp,Version=v1.0</NuGetTargetMoniker>
     <BaseNuGetRuntimeIdentifier Condition="'$(OSTarget)' == 'Windows_NT'">win7</BaseNuGetRuntimeIdentifier>
+    <Platform>x64</Platform>
+    <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="ColoredCubeRenderer.cs" />
@@ -45,18 +47,18 @@
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'OSX_Debug|x64' " />
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'OSX_Release|x64' " />
   <ItemGroup>
-    <None Include="GLSL\shadow-frag.glsl">
+    <Content Include="GLSL\shadow-frag.glsl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="GLSL\shadow-vertex.glsl">
+    </Content>
+    <Content Include="GLSL\shadow-vertex.glsl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="GLSL\simple-2d-frag.glsl">
+    </Content>
+    <Content Include="GLSL\simple-2d-frag.glsl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="GLSL\simple-2d-vertex.glsl">
+    </Content>
+    <Content Include="GLSL\simple-2d-vertex.glsl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    </Content>
     <Content Include="HLSL\shadow-frag.hlsl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
@@ -75,15 +77,6 @@
     <Content Include="Textures\Wood.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Reference Include="$(DepsDir)\SharpYaml\SharpYaml.dll">
-      <Name>SharpYaml</Name>
-    </Reference>
-    <Reference Include="$(DepsDir)\ImageProcessor\ImageProcessorCore.dll">
-      <Name>ImageProcessorCore</Name>
-    </Reference>
-    <Reference Include="$(DepsDir)\ImGui.NET\ImGui.NET.dll">
-      <Name>ImGui.NET</Name>
-    </Reference>
     <ProjectReference Include="..\Veldrid\Veldrid.csproj">
       <Project>{ae9bc745-284f-42f3-8236-c43ff9731df2}</Project>
       <Name>Veldrid</Name>
@@ -91,24 +84,18 @@
     <ProjectReference Include="..\Veldrid.Assets\Veldrid.Assets.csproj">
       <Name>Veldrid.Assets</Name>
     </ProjectReference>
-    <Content Include="$(DepsDir)\ImGui.NET\win-x64\cimgui.dll">
+    <Content Include="GLSL\shadowmap-frag.glsl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="$(DepsDir)\ImGui.NET\ubuntu-x64\cimgui.so" Condition="'$(OSTarget)' == 'Ubuntu'">
+    <Content Include="GLSL\shadowmap-vertex.glsl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <None Include="GLSL\shadowmap-frag.glsl">
+    <Content Include="GLSL\imgui-frag.glsl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="GLSL\shadowmap-vertex.glsl">
+    </Content>
+    <Content Include="GLSL\imgui-vertex.glsl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="GLSL\imgui-frag.glsl">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="GLSL\imgui-vertex.glsl">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    </Content>
     <Content Include="HLSL\imgui-frag.hlsl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
@@ -136,9 +123,9 @@
     <Content Include="GLSL\textured-vertex.glsl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <None Include="GLSL\lit-frag.glsl">
+    <Content Include="GLSL\lit-frag.glsl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    </Content>
     <Content Include="GLSL\simple-frag.glsl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

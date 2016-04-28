@@ -586,7 +586,7 @@ https://github.com/mellinoe/veldrid.");
                 {
                     object prefs = Preferences.Instance;
                     Drawer d = new ComplexItemDrawer(typeof(Preferences), false);
-                    ImGui.SetNextTreeNodeOpened(true, SetCondition.FirstUseEver);
+                    ImGuiNative.igSetNextTreeNodeOpened(true, SetCondition.FirstUseEver);
                     d.Draw("Preferences", ref prefs);
                     if (ImGui.Button("Save"))
                     {
