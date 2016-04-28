@@ -253,3 +253,6 @@ Session.vim
 *.VC.db
 *.nvact
 *.opendb
+
+# VS Code
+*.vscode
