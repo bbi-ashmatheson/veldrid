@@ -35,7 +35,7 @@ namespace Veldrid.RenderDemo
         private static FlatListVisibilityManager _boxSceneVM;
         private static FlatListVisibilityManager _teapotVM;
         private static FlatListVisibilityManager _shadowsScene;
-        private static double _circleWidth = 5.0;
+        private static double _circleWidth = 12.0;
         private static bool _wireframe;
 
         private static bool _takeScreenshot;
@@ -50,7 +50,7 @@ namespace Veldrid.RenderDemo
 
         private static Vector3 _lightDirection;
         private static float _fieldOfViewRadians = 1.05f;
-        private static bool _autoRotateCamera = false;
+        private static bool _autoRotateCamera = true;
         private static bool _moveLight = false;
 
         private static float _previousMouseX;
@@ -333,7 +333,7 @@ namespace Veldrid.RenderDemo
             }
             if (InputTracker.GetKeyDown(OpenTK.Input.Key.F11))
             {
-                _window.WindowState = _window.WindowState == WindowState.FullScreen ? WindowState.Normal : WindowState.FullScreen;
+                ToggleFullScreen();
             }
             if (InputTracker.GetKeyDown(OpenTK.Input.Key.Escape))
             {
@@ -410,6 +410,11 @@ namespace Veldrid.RenderDemo
             _imguiRenderer.UpdateFinished();
         }
 
+        private static void ToggleFullScreen()
+        {
+            _window.WindowState = _window.WindowState == WindowState.FullScreen ? WindowState.Normal : WindowState.FullScreen;
+        }
+
         private static void DrawMainMenu()
         {
             bool triggerPopup = false;
@@ -456,6 +461,10 @@ namespace Veldrid.RenderDemo
                 }
                 if (ImGui.BeginMenu("View"))
                 {
+                    if (ImGui.MenuItem("Full Screen", "F11"))
+                    {
+                        ToggleFullScreen();
+                    }
                     if (ImGui.Checkbox("Wireframe", ref _wireframe))
                     {
                         if (_wireframe)
@@ -481,7 +490,7 @@ namespace Veldrid.RenderDemo
                     string apiName = (_rc is OpenGLRenderContext) ? "OpenGL" : "Direct3D";
                     if (ImGui.BeginMenu($"Renderer: {apiName}"))
                     {
-                        if (ImGui.MenuItem("D3D", null))
+                        if (_onWindows && ImGui.MenuItem("D3D", null))
                         {
                             ChangeRenderContext(d3d: true);
                         }
@@ -544,6 +553,17 @@ namespace Veldrid.RenderDemo
                 }
                 if (ImGui.BeginMenu("About"))
                 {
+                    if (ImGui.MenuItem("View Source", null))
+                    {
+                        if (_onWindows)
+                        {
+                            Process.Start("https://github.com/mellinoe/veldrid");
+                        }
+                        else
+                        {
+                            Process.Start("xdg-open", "https://github.com/mellinoe/veldrid");
+                        }
+                    }
                     if (ImGui.MenuItem("About Veldrid", null))
                     {
                         triggerPopup = true;
