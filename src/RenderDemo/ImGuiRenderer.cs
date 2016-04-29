@@ -230,7 +230,7 @@ namespace Veldrid.RenderDemo
 
             rc.SetBlendState(_blendState);
             rc.SetDepthStencilState(_depthDisabledState);
-            var previousRasterizerState = rc.RasterizerState;
+            RasterizerState previousRasterizerState = rc.RasterizerState;
             rc.SetRasterizerState(_rasterizerState);
             rc.SetVertexBuffer(_vertexBuffer);
             rc.SetIndexBuffer(_indexBuffer);

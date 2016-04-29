@@ -49,10 +49,7 @@ namespace Veldrid.Graphics
         public RasterizerState RasterizerState
         {
             get { return _rasterizerState; }
-            set
-            {
-                SetRasterizerState(value);
-            }
+            set { SetRasterizerState(value); }
         }
 
         public virtual RgbaFloat ClearColor { get; set; } = RgbaFloat.CornflowerBlue;
