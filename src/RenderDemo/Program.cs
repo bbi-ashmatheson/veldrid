@@ -63,6 +63,9 @@ namespace Veldrid.RenderDemo
         private static bool _preferencesEditorOpened;
         private static PipelineStage[] _configurableStages;
 
+        private static bool _perspectiveProjection = true;
+        private static float _orthographicWidth = 10f;
+
         public static void Main()
         {
             try
@@ -194,11 +197,19 @@ namespace Veldrid.RenderDemo
 
         private static void SetProjectionMatrix()
         {
+            if (_perspectiveProjection)
+            {
             _projectionMatrixProvider.Data = Matrix4x4.CreatePerspectiveFieldOfView(
                 _fieldOfViewRadians,
                 _rc.Window.Width / (float)_rc.Window.Height,
                 1f,
                 1000f);
+            }
+            else
+            {
+                float orthographicHeight = _orthographicWidth * _rc.Window.Height / _rc.Window.Width;
+                _projectionMatrixProvider.Data = Matrix4x4.CreateOrthographic(_orthographicWidth, orthographicHeight, .1f, 100f);
+            }
         }
 
         private static void CreateWireframeRasterizerState()
@@ -369,10 +380,20 @@ namespace Veldrid.RenderDemo
                     if (InputTracker.GetKey(OpenTK.Input.Key.W))
                     {
                         _cameraPosition += cameraForward * _cameraMoveSpeed * sprintFactor * deltaSec;
+                        if (!_perspectiveProjection)
+                        {
+                            _orthographicWidth -= 5f * deltaSec * sprintFactor;
+                            SetProjectionMatrix();
+                        }
                     }
                     if (InputTracker.GetKey(OpenTK.Input.Key.S))
                     {
                         _cameraPosition -= cameraForward * _cameraMoveSpeed * sprintFactor * deltaSec;
+                        if (!_perspectiveProjection)
+                        {
+                            _orthographicWidth += 5f * deltaSec * sprintFactor;
+                            SetProjectionMatrix();
+                        }
                     }
                     if (InputTracker.GetKey(OpenTK.Input.Key.D))
                     {
@@ -505,9 +526,31 @@ namespace Veldrid.RenderDemo
                         ImGui.EndMenu();
                     }
 
-                    if (ImGui.SliderFloat("FOV", ref _fieldOfViewRadians, 0.05f, (float)Math.PI - .01f, _fieldOfViewRadians.ToString(), 1f))
+                    if (ImGui.BeginMenu("Camera Settings"))
                     {
-                        SetProjectionMatrix();
+                        string buttonLabel = _perspectiveProjection ? "Perspective" : "Orthographic";
+                        if (ImGui.Button(buttonLabel))
+                        {
+                            _perspectiveProjection = !_perspectiveProjection;
+                            SetProjectionMatrix();
+                        }
+                        
+                        if (_perspectiveProjection)
+                        {
+                            if (ImGui.SliderFloat("FOV", ref _fieldOfViewRadians, 0.05f, (float)Math.PI - .01f, _fieldOfViewRadians.ToString(), 1f))
+                            {
+                                SetProjectionMatrix();
+                            }
+                        }
+                        else
+                        {
+                            if (ImGui.DragFloat("Orthographic Width", ref _orthographicWidth, 1f, 100f, 1f))
+                            {
+                                SetProjectionMatrix();
+                            }
+                        }
+                        
+                        ImGui.EndMenu();
                     }
 
                     string cameraLabel = _autoRotateCamera ? "Camera: Auto" : "Camera: WASD";
