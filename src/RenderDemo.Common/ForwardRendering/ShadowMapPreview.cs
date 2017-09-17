@@ -8,12 +8,11 @@ namespace Veldrid.RenderDemo.ForwardRendering
 {
     public class ShadowMapPreview : SwappableRenderItem
     {
-        private readonly DynamicDataProvider<Matrix4x4> _worldMatrixProvider = new DynamicDataProvider<Matrix4x4>();
-        private readonly DynamicDataProvider<Matrix4x4> _projectionMatrixProvider = new DynamicDataProvider<Matrix4x4>();
-
         private VertexBuffer _vertexBuffer;
         private IndexBuffer _indexBuffer;
         private Material _material;
+        private ConstantBuffer _worldMatrixBuffer;
+        private ConstantBuffer _projectionMatrixBuffer;
         private float _imageWidth = 200f;
         private DepthStencilState _depthDisabledState;
 
@@ -28,7 +27,7 @@ namespace Veldrid.RenderDemo.ForwardRendering
         public void ChangeRenderContext(AssetDatabase ad, RenderContext rc)
         {
             var factory = rc.ResourceFactory;
-            _vertexBuffer = factory.CreateVertexBuffer(VertexPositionTexture.SizeInBytes, false);
+            _vertexBuffer = factory.CreateVertexBuffer(VertexPositionTexture.SizeInBytes * 4, false);
             _vertexBuffer.SetVertexData(new VertexPositionTexture[]
             {
                 new VertexPositionTexture(new Vector3(0, 0, 0), new Vector2(0, 0)),
@@ -38,22 +37,27 @@ namespace Veldrid.RenderDemo.ForwardRendering
             }, new VertexDescriptor(VertexPositionTexture.SizeInBytes, VertexPositionTexture.ElementCount, 0, IntPtr.Zero),
             0);
 
-            _indexBuffer = factory.CreateIndexBuffer(sizeof(byte) * 6, false);
-            _indexBuffer.SetIndices(new byte[] { 0, 1, 2, 0, 2, 3 }, IndexFormat.UInt8);
+            _indexBuffer = factory.CreateIndexBuffer(sizeof(ushort) * 6, false);
+            _indexBuffer.SetIndices(new ushort[] { 0, 1, 2, 0, 2, 3 });
 
             _material = factory.CreateMaterial(
                 rc,
                 "simple-2d-vertex",
                 "simple-2d-frag",
-                new MaterialVertexInput(
+                new VertexInputDescription(
                     VertexPositionTexture.SizeInBytes,
-                    new MaterialVertexInputElement("in_position", VertexSemanticType.Position, VertexElementFormat.Float3),
-                    new MaterialVertexInputElement("in_texCoord", VertexSemanticType.TextureCoordinate, VertexElementFormat.Float2)),
-                new MaterialInputs<MaterialGlobalInputElement>(
-                    new MaterialGlobalInputElement("WorldMatrixBuffer", MaterialInputType.Matrix4x4, _worldMatrixProvider),
-                    new MaterialGlobalInputElement("ProjectionMatrixBuffer", MaterialInputType.Matrix4x4, _projectionMatrixProvider)),
-                MaterialInputs<MaterialPerObjectInputElement>.Empty,
-                new MaterialTextureInputs(new ContextTextureInputElement("SurfaceTexture", "ShadowMap")));
+                    new VertexInputElement("in_position", VertexSemanticType.Position, VertexElementFormat.Float3),
+                    new VertexInputElement("in_texCoord", VertexSemanticType.TextureCoordinate, VertexElementFormat.Float2)),
+                new[]
+                {
+                    new ShaderResourceDescription("WorldMatrixBuffer", ShaderConstantType.Matrix4x4),
+                    new ShaderResourceDescription("ProjectionMatrixBuffer", ShaderConstantType.Matrix4x4),
+                    new ShaderResourceDescription("SurfaceTexture", ShaderResourceType.Texture),
+                    new ShaderResourceDescription("SurfaceTexture", ShaderResourceType.Sampler),
+                });
+
+            _worldMatrixBuffer = factory.CreateConstantBuffer(ShaderConstantType.Matrix4x4);
+            _projectionMatrixBuffer = factory.CreateConstantBuffer(ShaderConstantType.Matrix4x4);
 
             _depthDisabledState = factory.CreateDepthStencilState(false, DepthComparison.Always);
         }
@@ -69,20 +73,25 @@ namespace Veldrid.RenderDemo.ForwardRendering
         {
             Matrix4x4 orthoProjection = Matrix4x4.CreateOrthographicOffCenter(
                 0f,
-                rc.Window.Width,
-                rc.Window.Height,
+                rc.Viewport.Width,
+                rc.Viewport.Height,
                 0f,
                 -1.0f,
                 1.0f);
-            _projectionMatrixProvider.Data = orthoProjection;
+            Matrix4x4 proj = orthoProjection;
+            _projectionMatrixBuffer.SetData(ref proj, 64);
 
-            float width = _imageWidth * rc.Window.ScaleFactor.X;
-            _worldMatrixProvider.Data = Matrix4x4.CreateScale(width)
-                * Matrix4x4.CreateTranslation(rc.Window.Width - width - 20, 20 * rc.Window.ScaleFactor.Y, 0);
+            float width = _imageWidth;
+            Matrix4x4 world = Matrix4x4.CreateScale(width)
+                * Matrix4x4.CreateTranslation(rc.Viewport.Width - width - 20, 20, 0);
+            _worldMatrixBuffer.SetData(ref world, 64);
 
-            rc.SetVertexBuffer(_vertexBuffer);
-            rc.SetIndexBuffer(_indexBuffer);
-            rc.SetMaterial(_material);
+            rc.VertexBuffer = _vertexBuffer;
+            rc.IndexBuffer = _indexBuffer;
+            _material.Apply(rc);
+            rc.SetConstantBuffer(0, _worldMatrixBuffer);
+            rc.SetConstantBuffer(1, _projectionMatrixBuffer);
+            rc.SetTexture(2, SharedTextures.GetTextureBinding("ShadowMap"));
             rc.SetDepthStencilState(_depthDisabledState);
             rc.DrawIndexedPrimitives(6, 0);
             rc.SetDepthStencilState(rc.DefaultDepthStencilState);

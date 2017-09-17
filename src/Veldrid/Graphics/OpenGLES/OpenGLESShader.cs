@@ -1,6 +1,4 @@
 ﻿using OpenTK.Graphics.ES30;
-using System;
-using System.IO;
 
 namespace Veldrid.Graphics.OpenGLES
 {
@@ -8,26 +6,14 @@ namespace Veldrid.Graphics.OpenGLES
     {
         public int ShaderID { get; private set; }
 
-        public ShaderType Type { get; }
+        public ShaderStages Type { get; }
 
-        public OpenGLESShader(Stream dataStream, OpenTK.Graphics.ES30.ShaderType type)
-        {
-            Type = OpenGLESFormats.GLToVeldridShaderType(type);
-            string source;
-            using (var sr = new StreamReader(dataStream))
-            {
-                source = sr.ReadToEnd();
-            }
-
-            LoadShader(source, type);
-        }
-
-        public OpenGLESShader(string source, OpenTK.Graphics.ES30.ShaderType type)
+        public OpenGLESShader(string source, ShaderType type)
         {
             LoadShader(source, type);
         }
 
-        private void LoadShader(string source, OpenTK.Graphics.ES30.ShaderType type)
+        private void LoadShader(string source, ShaderType type)
         {
             ShaderID = GL.CreateShader(type);
             Utilities.CheckLastGLES3Error();
@@ -41,7 +27,7 @@ namespace Veldrid.Graphics.OpenGLES
             {
                 string shaderLog = GL.GetShaderInfoLog(ShaderID);
                 Utilities.CheckLastGLES3Error();
-                throw new InvalidOperationException($"Error compiling {type} shader. {shaderLog}");
+                throw new VeldridException($"Error compiling {type} shader. {shaderLog}");
             }
         }
 

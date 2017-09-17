@@ -76,11 +76,12 @@ namespace Veldrid.Graphics.OpenGL
             glTex.Bind();
             GL.FramebufferTexture2D(
                 FramebufferTarget.Framebuffer,
-                FramebufferAttachment.ColorAttachment0,
+                FramebufferAttachment.ColorAttachment0 + index,
                 TextureTarget.Texture2D,
                 glTex.ID,
                 0);
             GL.BindTexture(TextureTarget.Texture2D, 0);
+            // TODO: I'm pretty sure this is supposed to be using glDrawBuffers (plural).
             GL.DrawBuffer(DrawBufferMode.ColorAttachment0 + index);
             Unbind();
         }
@@ -123,7 +124,7 @@ namespace Veldrid.Graphics.OpenGL
             FramebufferErrorCode errorCode = GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
             if (errorCode != FramebufferErrorCode.FramebufferComplete)
             {
-                throw new InvalidOperationException("Framebuffer was not complete: " + errorCode);
+                throw new VeldridException("Framebuffer was not complete: " + errorCode);
             }
         }
 

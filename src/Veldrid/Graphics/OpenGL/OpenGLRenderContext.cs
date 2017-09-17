@@ -1,9 +1,11 @@
 ﻿using System;
 using OpenTK.Graphics.OpenGL;
 using OpenTK.Graphics;
-using Veldrid.Platform;
 using System.Runtime.InteropServices;
 using OpenTK;
+using Veldrid.Platform;
+using System.Diagnostics;
+using System.Collections.Generic;
 
 namespace Veldrid.Graphics.OpenGL
 {
@@ -11,63 +13,92 @@ namespace Veldrid.Graphics.OpenGL
     {
         private readonly OpenGLResourceFactory _resourceFactory;
         private readonly GraphicsContext _openGLGraphicsContext;
+        private readonly OpenGLExtensions _extensions;
         private readonly OpenGLDefaultFramebuffer _defaultFramebuffer;
+        private readonly int _maxConstantBufferSlots;
+        private readonly OpenGLConstantBuffer[] _constantBuffersBySlot;
+        private readonly OpenGLConstantBuffer[] _newConstantBuffersBySlot; // CB's bound during draw call preparation
+        private readonly OpenGLTextureSamplerManager _textureSamplerManager;
+        private int _maxTextureUnits;
+        private int _newConstantBuffersCount;
         private readonly int _vertexArrayID;
+        private readonly int _maxVertexAttributeSlots;
+        private readonly int[] _vertexAttribDivisors;
         private PrimitiveType _primitiveType = PrimitiveType.Triangles;
         private int _vertexAttributesBound;
         private bool _vertexLayoutChanged;
+        private Action _swapBufferFunc;
+        private DebugProc _debugMessageCallback;
 
-        public DebugSeverity MinimumLogSeverity { get; set; } = DebugSeverity.DebugSeverityLow;
 
-        public OpenGLRenderContext(OpenTKWindow window,
-#if DEBUG
-        bool debugContext = true)
-#else
-        bool debugContext = false)
-#endif
-            : base(window)
+        public OpenGLRenderContext(Window window, OpenGLPlatformContextInfo platformContext)
         {
             _resourceFactory = new OpenGLResourceFactory();
             RenderCapabilities = new RenderCapabilities(true, true);
-
-            if (debugContext)
-            {
-                _openGLGraphicsContext = new GraphicsContext(GraphicsMode.Default, window.OpenTKWindowInfo, 4, 3, GraphicsContextFlags.Debug);
-            }
-            else
-            {
-                _openGLGraphicsContext = new GraphicsContext(GraphicsMode.Default, window.OpenTKWindowInfo, 3, 3, GraphicsContextFlags.ForwardCompatible);
-            }
-            _openGLGraphicsContext.MakeCurrent(window.OpenTKWindowInfo);
+            _swapBufferFunc = platformContext.SwapBuffer;
+            GraphicsContext.GetAddressDelegate getAddressFunc = s => platformContext.GetProcAddress(s);
+            GraphicsContext.GetCurrentContextDelegate getCurrentContextFunc = () => new ContextHandle(platformContext.GetCurrentContext());
+            _openGLGraphicsContext = new GraphicsContext(new ContextHandle(platformContext.ContextHandle), getAddressFunc, getCurrentContextFunc);
 
             _openGLGraphicsContext.LoadAll();
 
-            // NOTE: I am binding a single VAO globally. This may or may not be a good idea.
+            // NOTE: I am binding a single VAO globally.
             _vertexArrayID = GL.GenVertexArray();
             GL.BindVertexArray(_vertexArrayID);
 
-            _defaultFramebuffer = new OpenGLDefaultFramebuffer(Window);
+            _defaultFramebuffer = new OpenGLDefaultFramebuffer(window.Width, window.Height);
+            OnWindowResized(window.Width, window.Height);
 
             SetInitialStates();
-            OnWindowResized();
 
             PostContextCreated();
 
-            if (debugContext)
+            int extensionCount = GL.GetInteger(GetPName.NumExtensions);
+            HashSet<string> extensions = new HashSet<string>();
+            for (int i = 0; i < extensionCount; i++)
             {
-                GL.Enable(EnableCap.DebugOutput);
-                GL.DebugMessageCallback(DebugCallback, IntPtr.Zero);
+                extensions.Add(GL.GetString(StringNameIndexed.Extensions, i));
             }
+            _extensions = new OpenGLExtensions(extensions);
+
+            _textureSamplerManager = new OpenGLTextureSamplerManager(_extensions);
+
+            _maxConstantBufferSlots = GL.GetInteger(GetPName.MaxUniformBufferBindings);
+            _constantBuffersBySlot = new OpenGLConstantBuffer[_maxConstantBufferSlots];
+            _newConstantBuffersBySlot = new OpenGLConstantBuffer[_maxConstantBufferSlots];
+
+            _maxTextureUnits = GL.GetInteger(GetPName.MaxTextureUnits);
+
+            _maxVertexAttributeSlots = GL.GetInteger(GetPName.MaxVertexAttribs);
+            _vertexAttribDivisors = new int[_maxVertexAttributeSlots];
         }
 
-        private void DebugCallback(DebugSource source, DebugType type, int id, DebugSeverity severity, int length, IntPtr message, IntPtr userParam)
+        public void EnableDebugCallback() => EnableDebugCallback(DebugSeverity.DebugSeverityNotification);
+        public void EnableDebugCallback(DebugSeverity minimumSeverity) => EnableDebugCallback(DefaultDebugCallback(minimumSeverity));
+        public void EnableDebugCallback(DebugProc callback)
         {
-            if (severity >= MinimumLogSeverity)
-            {
-                string messageString = Marshal.PtrToStringAnsi(message, length);
-                System.Diagnostics.Debug.WriteLine($"GL DEBUG MESSAGE: {source}, {type}, {id}. {severity}: {messageString}");
-            }
+            GL.Enable(EnableCap.DebugOutput);
+            // The debug callback delegate must be persisted, otherwise errors will occur
+            // when the OpenGL drivers attempt to call it after it has been collected.
+            _debugMessageCallback = callback;
+            GL.DebugMessageCallback(_debugMessageCallback, IntPtr.Zero);
         }
+
+        private DebugProc DefaultDebugCallback(DebugSeverity minimumSeverity)
+        {
+            return (DebugSource source, DebugType type, int id, DebugSeverity severity, int length, IntPtr message, IntPtr userParam) =>
+            {
+                if (severity >= minimumSeverity)
+                {
+                    string messageString = Marshal.PtrToStringAnsi(message, length);
+                    System.Diagnostics.Debug.WriteLine($"GL DEBUG MESSAGE: {source}, {type}, {id}. {severity}: {messageString}");
+                }
+            };
+        }
+
+        protected override GraphicsBackend PlatformGetGraphicsBackend() => GraphicsBackend.OpenGL;
+
+        public OpenGLExtensions Extensions => _extensions;
 
         public override ResourceFactory ResourceFactory => _resourceFactory;
 
@@ -80,7 +111,7 @@ namespace Veldrid.Graphics.OpenGL
             set
             {
                 base.ClearColor = value;
-                Color4 openTKColor = RgbaFloat.ToOpenTKColor(value);
+                Color4 openTKColor = new Color4(value.R, value.G, value.B, value.A);
                 GL.ClearColor(openTKColor);
             }
         }
@@ -92,7 +123,11 @@ namespace Veldrid.Graphics.OpenGL
 
         protected override void PlatformSwapBuffers()
         {
-            if (Window.Exists)
+            if (_swapBufferFunc != null)
+            {
+                _swapBufferFunc();
+            }
+            else
             {
                 _openGLGraphicsContext.SwapBuffers();
             }
@@ -141,16 +176,14 @@ namespace Veldrid.Graphics.OpenGL
         {
             GL.ClearColor(ClearColor.R, ClearColor.G, ClearColor.B, ClearColor.A);
             GL.Enable(EnableCap.CullFace);
+            GL.Enable(EnableCap.TextureCubeMapSeamless);
             GL.FrontFace(FrontFaceDirection.Cw);
         }
 
-        protected override void PlatformResize()
+        protected override void PlatformResize(int width, int height)
         {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            {
-                // Documentation indicates that this needs to be called on OSX for proper behavior.
-                _openGLGraphicsContext.Update(((OpenTKWindow)Window).OpenTKWindowInfo);
-            }
+            _defaultFramebuffer.Width = width;
+            _defaultFramebuffer.Height = height;
         }
 
         protected override void PlatformSetViewport(int x, int y, int width, int height)
@@ -168,12 +201,12 @@ namespace Veldrid.Graphics.OpenGL
             SetFramebuffer(_defaultFramebuffer);
         }
 
-        protected override void PlatformSetScissorRectangle(System.Drawing.Rectangle rectangle)
+        protected override void PlatformSetScissorRectangle(Rectangle rectangle)
         {
             GL.Enable(EnableCap.ScissorTest);
             GL.Scissor(
                 rectangle.Left,
-                Window.Height - rectangle.Bottom,
+                Viewport.Height - rectangle.Bottom,
                 rectangle.Width,
                 rectangle.Height);
         }
@@ -201,21 +234,170 @@ namespace Veldrid.Graphics.OpenGL
             _vertexLayoutChanged = true;
         }
 
-        protected override void PlatformSetShaderConstantBindings(ShaderConstantBindings shaderConstantBindings)
+        protected override void PlatformSetShaderResourceBindingSlots(ShaderResourceBindingSlots shaderConstantBindings)
         {
-            shaderConstantBindings.Apply();
         }
 
-        protected override void PlatformSetShaderTextureBindingSlots(ShaderTextureBindingSlots bindingSlots)
+        protected override void PlatformSetConstantBuffer(int slot, ConstantBuffer cb)
         {
+            OpenGLUniformBinding binding = ShaderResourceBindingSlots.GetUniformBindingForSlot(slot);
+            if (binding.BlockLocation != -1)
+            {
+                BindUniformBlock(ShaderSet, slot, binding.BlockLocation, (OpenGLConstantBuffer)cb);
+            }
+            else
+            {
+                Debug.Assert(binding.StorageAdapter != null);
+                SetUniformLocationDataSlow((OpenGLConstantBuffer)cb, binding.StorageAdapter);
+            }
+        }
+
+        private void BindUniformBlock(OpenGLShaderSet shaderSet, int slot, int blockLocation, OpenGLConstantBuffer cb)
+        {
+            if (slot > _maxConstantBufferSlots)
+            {
+                throw new VeldridException($"Too many constant buffers used. Limit is {_maxConstantBufferSlots}.");
+            }
+
+            // Bind Constant Buffer to slot
+            if (_constantBuffersBySlot[slot] == cb)
+            {
+                if (_newConstantBuffersBySlot[slot] != null)
+                {
+                    _newConstantBuffersCount -= 1;
+                }
+                _newConstantBuffersBySlot[slot] = null;
+            }
+            else
+            {
+                if (_newConstantBuffersBySlot[slot] == null)
+                {
+                    _newConstantBuffersCount += 1;
+                }
+
+                _newConstantBuffersBySlot[slot] = cb;
+            }
+
+            // Bind slot to uniform block location. Performs internal caching to avoid GL calls.
+            shaderSet.BindConstantBuffer(slot, blockLocation, cb);
+        }
+
+        private void CommitNewConstantBufferBindings()
+        {
+            if (_newConstantBuffersCount > 0)
+            {
+                if (_extensions.ARB_MultiBind)
+                {
+                    CommitNewConstantBufferBindings_MultiBind();
+                }
+                else
+                {
+                    CommitNewConstantBufferBindings_SingleBind();
+                }
+
+                Array.Clear(_newConstantBuffersBySlot, 0, _newConstantBuffersBySlot.Length);
+                _newConstantBuffersCount = 0;
+            }
+        }
+
+        private unsafe void CommitNewConstantBufferBindings_MultiBind()
+        {
+            Debug.Assert(_extensions.ARB_MultiBind);
+            int* buffers = stackalloc int[_maxConstantBufferSlots];
+            IntPtr* sizes = stackalloc IntPtr[_maxConstantBufferSlots];
+            IntPtr* offsets = stackalloc IntPtr[_maxConstantBufferSlots];
+            int currentIndex = 0; // Index into stack allocated buffers.
+            int currentBaseSlot = -1;
+            int remainingBuffers = _newConstantBuffersCount;
+
+            void AddBinding(OpenGLConstantBuffer cb)
+            {
+                buffers[currentIndex] = cb.BufferID;
+                sizes[currentIndex] = new IntPtr(cb.BufferSize);
+
+                currentIndex += 1;
+            }
+
+            void EmitBindings()
+            {
+                int count = currentIndex;
+                GL.BindBuffersRange(BufferRangeTarget.UniformBuffer, currentBaseSlot, count, buffers, offsets, sizes);
+                Utilities.CheckLastGLError();
+                currentIndex = 0;
+                currentBaseSlot = -1;
+                remainingBuffers -= count;
+                Debug.Assert(remainingBuffers >= 0);
+            }
+
+            for (int slot = 0; slot < _maxConstantBufferSlots; slot++)
+            {
+                OpenGLConstantBuffer cb = _newConstantBuffersBySlot[slot];
+                if (cb != null)
+                {
+                    AddBinding(cb);
+                    if (currentBaseSlot == -1)
+                    {
+                        currentBaseSlot = slot;
+                    }
+                    _constantBuffersBySlot[slot] = cb;
+                }
+                else if (currentIndex != 0)
+                {
+                    EmitBindings();
+                    if (remainingBuffers == 0)
+                    {
+                        return;
+                    }
+                }
+            }
+
+            if (currentIndex != 0)
+            {
+                EmitBindings();
+            }
+        }
+
+        private void CommitNewConstantBufferBindings_SingleBind()
+        {
+            int remainingBindings = _newConstantBuffersCount;
+            for (int slot = 0; slot < _maxConstantBufferSlots; slot++)
+            {
+                if (remainingBindings == 0)
+                {
+                    return;
+                }
+
+                OpenGLConstantBuffer cb = _newConstantBuffersBySlot[slot];
+                if (cb != null)
+                {
+                    GL.BindBufferRange(BufferRangeTarget.UniformBuffer, slot, cb.BufferID, IntPtr.Zero, cb.BufferSize);
+                    remainingBindings -= 1;
+                }
+            }
+        }
+
+        private unsafe void SetUniformLocationDataSlow(OpenGLConstantBuffer cb, OpenGLUniformStorageAdapter storageAdapter)
+        {
+            // NOTE: This is slow -- avoid using uniform locations in shader code. Prefer uniform blocks.
+            int dataSizeInBytes = cb.BufferSize;
+            byte* data = stackalloc byte[dataSizeInBytes];
+            cb.GetData((IntPtr)data, dataSizeInBytes);
+            storageAdapter.SetData((IntPtr)data, dataSizeInBytes);
         }
 
         protected override void PlatformSetTexture(int slot, ShaderTextureBinding textureBinding)
         {
-            GL.ActiveTexture(TextureUnit.Texture0 + slot);
-            ((OpenGLTexture)textureBinding.BoundTexture).Bind();
-            int uniformLocation = ShaderTextureBindingSlots.GetUniformLocation(slot);
-            GL.Uniform1(uniformLocation, slot);
+            OpenGLTextureBinding glTextureBinding = (OpenGLTextureBinding)textureBinding;
+            OpenGLTextureBindingSlotInfo info = ShaderResourceBindingSlots.GetTextureBindingInfo(slot);
+            _textureSamplerManager.SetTexture(info.RelativeIndex, glTextureBinding);
+            ShaderSet.UpdateTextureUniform(info.UniformLocation, info.RelativeIndex);
+        }
+
+        protected override void PlatformSetSamplerState(int slot, SamplerState samplerState)
+        {
+            OpenGLSamplerState glSampler = (OpenGLSamplerState)samplerState;
+            OpenGLTextureBindingSlotInfo info = ShaderResourceBindingSlots.GetSamplerBindingInfo(slot);
+            _textureSamplerManager.SetSampler(info.RelativeIndex, glSampler);
         }
 
         protected override void PlatformSetFramebuffer(Framebuffer framebuffer)
@@ -279,11 +461,52 @@ namespace Veldrid.Graphics.OpenGL
         {
             if (_vertexLayoutChanged)
             {
-                _vertexAttributesBound = ((OpenGLVertexInputLayout)ShaderSet.InputLayout).SetVertexAttributes(VertexBuffers, _vertexAttributesBound);
+                SetVertexAttributes(ShaderSet.InputLayout, VertexBuffers);
                 _vertexLayoutChanged = false;
             }
+
+            CommitNewConstantBufferBindings();
         }
 
-        private new OpenGLTextureBindingSlots ShaderTextureBindingSlots => (OpenGLTextureBindingSlots)base.ShaderTextureBindingSlots;
+        private void SetVertexAttributes(OpenGLVertexInputLayout inputlayout, VertexBuffer[] vertexBuffers)
+        {
+            int totalSlotsBound = 0;
+            for (int i = 0; i < inputlayout.VBLayoutsBySlot.Length; i++)
+            {
+                OpenGLVertexInput input = inputlayout.VBLayoutsBySlot[i];
+                ((OpenGLVertexBuffer)vertexBuffers[i]).Apply();
+                for (int slot = 0; slot < input.Elements.Length; slot++)
+                {
+                    ref OpenGLVertexInputElement element = ref input.Elements[slot]; // Large structure -- use by reference.
+                    int actualSlot = totalSlotsBound + slot;
+                    if (actualSlot >= _vertexAttributesBound)
+                    {
+                        GL.EnableVertexAttribArray(actualSlot);
+                    }
+
+                    GL.VertexAttribPointer(actualSlot, element.ElementCount, element.Type, element.Normalized, input.VertexSizeInBytes, element.Offset);
+
+                    int stepRate = element.InstanceStepRate;
+                    if (_vertexAttribDivisors[actualSlot] != stepRate)
+                    {
+                        GL.VertexAttribDivisor(actualSlot, stepRate);
+                        _vertexAttribDivisors[actualSlot] = stepRate;
+                    }
+                }
+
+                totalSlotsBound += input.Elements.Length;
+            }
+
+            for (int extraSlot = totalSlotsBound; extraSlot < _vertexAttributesBound; extraSlot++)
+            {
+                GL.DisableVertexAttribArray(extraSlot);
+            }
+
+            _vertexAttributesBound = totalSlotsBound;
+        }
+
+        private new OpenGLShaderSet ShaderSet => (OpenGLShaderSet)base.ShaderSet;
+        private new OpenGLShaderResourceBindingSlots ShaderResourceBindingSlots
+            => (OpenGLShaderResourceBindingSlots)base.ShaderResourceBindingSlots;
     }
 }

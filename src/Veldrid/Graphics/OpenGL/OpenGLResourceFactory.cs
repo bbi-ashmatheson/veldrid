@@ -2,23 +2,21 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 
 namespace Veldrid.Graphics.OpenGL
 {
     public class OpenGLResourceFactory : ResourceFactory
     {
-        private static readonly string s_shaderFileExtension = "glsl";
-
-        private List<ShaderLoader> _shaderLoaders = new List<ShaderLoader>();
-
         public OpenGLResourceFactory()
         {
-            AddShaderLoader(new FolderShaderLoader(Path.Combine(AppContext.BaseDirectory, "GLSL")));
         }
+
+        protected override GraphicsBackend PlatformGetGraphicsBackend() => GraphicsBackend.OpenGL;
 
         public override ConstantBuffer CreateConstantBuffer(int sizeInBytes)
         {
-            return new OpenGLConstantBuffer();
+            return new OpenGLConstantBuffer(sizeInBytes);
         }
 
         public override Framebuffer CreateFramebuffer()
@@ -26,75 +24,87 @@ namespace Veldrid.Graphics.OpenGL
             return new OpenGLFramebuffer();
         }
 
-        public override Framebuffer CreateFramebuffer(int width, int height)
-        {
-            OpenGLTexture2D colorTexture = new OpenGLTexture2D(
-                width, height,
-                PixelFormat.R32_G32_B32_A32_Float,
-                PixelInternalFormat.Rgba32f,
-                OpenTK.Graphics.OpenGL.PixelFormat.Rgba,
-                PixelType.Float);
-            OpenGLTexture2D depthTexture = new OpenGLTexture2D(
-                width,
-                height,
-                PixelFormat.Alpha_UInt16,
-                PixelInternalFormat.DepthComponent16,
-                OpenTK.Graphics.OpenGL.PixelFormat.DepthComponent,
-                PixelType.UnsignedShort);
-
-            return new OpenGLFramebuffer(colorTexture, depthTexture);
-        }
-
-        public override IndexBuffer CreateIndexBuffer(int sizeInBytes, bool isDynamic)
-        {
-            return new OpenGLIndexBuffer(isDynamic);
-        }
         public override IndexBuffer CreateIndexBuffer(int sizeInBytes, bool isDynamic, IndexFormat format)
         {
             return new OpenGLIndexBuffer(isDynamic, OpenGLFormats.MapIndexFormat(format));
         }
 
-        public override Shader CreateShader(ShaderType type, string name)
+        public override CompiledShaderCode ProcessShaderCode(ShaderStages type, string shaderCode)
         {
-            using (Stream stream = GetShaderStream(name))
-            using (StreamReader reader = new StreamReader(stream))
-            {
-                return CreateShader(type, reader.ReadToEnd(), name);
-            }
+            return new OpenGLCompiledShaderCode(shaderCode);
         }
 
-        public override Shader CreateShader(ShaderType type, string shaderCode, string name)
+        public override CompiledShaderCode LoadProcessedShader(byte[] bytes)
         {
-            return new OpenGLShader(shaderCode, OpenGLFormats.VeldridToGLShaderType(type));
+            string shaderCode;
+            try
+            {
+                shaderCode = Encoding.UTF8.GetString(bytes);
+            }
+            catch
+            {
+                try
+                {
+                    shaderCode = Encoding.ASCII.GetString(bytes);
+                }
+                catch
+                {
+                    throw new VeldridException("The byte array provided to LoadProcessedShader was not a valid shader string.");
+                }
+            }
+
+            return new OpenGLCompiledShaderCode(shaderCode);
+        }
+
+        public override Shader CreateShader(ShaderStages type, CompiledShaderCode compiledShaderCode)
+        {
+            OpenGLCompiledShaderCode glShaderSource = (OpenGLCompiledShaderCode)compiledShaderCode;
+            return new OpenGLShader(glShaderSource.ShaderCode, OpenGLFormats.VeldridToGLShaderType(type));
         }
 
         public override ShaderSet CreateShaderSet(VertexInputLayout inputLayout, Shader vertexShader, Shader fragmentShader)
         {
-            return new OpenGLShaderSet((OpenGLVertexInputLayout)inputLayout, (OpenGLShader)vertexShader, null, (OpenGLShader)fragmentShader);
+            return new OpenGLShaderSet((OpenGLVertexInputLayout)inputLayout, (OpenGLShader)vertexShader, null, null, null, (OpenGLShader)fragmentShader);
         }
 
         public override ShaderSet CreateShaderSet(VertexInputLayout inputLayout, Shader vertexShader, Shader geometryShader, Shader fragmentShader)
         {
-            return new OpenGLShaderSet((OpenGLVertexInputLayout)inputLayout, (OpenGLShader)vertexShader, (OpenGLShader)geometryShader, (OpenGLShader)fragmentShader);
+            return new OpenGLShaderSet(
+                (OpenGLVertexInputLayout)inputLayout,
+                (OpenGLShader)vertexShader,
+                null,
+                null,
+                (OpenGLShader)geometryShader,
+                (OpenGLShader)fragmentShader);
         }
 
-        public override ShaderConstantBindings CreateShaderConstantBindings(
-            RenderContext rc,
-            ShaderSet shaderSet,
-            MaterialInputs<MaterialGlobalInputElement> globalInputs,
-            MaterialInputs<MaterialPerObjectInputElement> perObjectInputs)
+        public override ShaderSet CreateShaderSet(
+            VertexInputLayout inputLayout,
+            Shader vertexShader,
+            Shader tessellationControlShader,
+            Shader tessellationEvaluationShader,
+            Shader geometryShader,
+            Shader fragmentShader)
         {
-            return new OpenGLShaderConstantBindings(rc, shaderSet, globalInputs, perObjectInputs);
+            return new OpenGLShaderSet(
+                (OpenGLVertexInputLayout)inputLayout,
+                (OpenGLShader)vertexShader,
+                (OpenGLShader)tessellationControlShader,
+                (OpenGLShader)tessellationEvaluationShader,
+                (OpenGLShader)geometryShader,
+                (OpenGLShader)fragmentShader);
         }
 
-        public override VertexInputLayout CreateInputLayout(Shader shader, MaterialVertexInput[] vertexInputs)
+        public override ShaderResourceBindingSlots CreateShaderResourceBindingSlots(
+            ShaderSet shaderSet,
+            ShaderResourceDescription[] resources)
+        {
+            return new OpenGLShaderResourceBindingSlots((OpenGLShaderSet)shaderSet, resources);
+        }
+
+        public override VertexInputLayout CreateInputLayout(VertexInputDescription[] vertexInputs)
         {
             return new OpenGLVertexInputLayout(vertexInputs);
-        }
-
-        public override ShaderTextureBindingSlots CreateShaderTextureBindingSlots(ShaderSet shaderSet, MaterialTextureInputs textureInputs)
-        {
-            return new OpenGLTextureBindingSlots(shaderSet, textureInputs);
         }
 
         public override ShaderTextureBinding CreateShaderTextureBinding(DeviceTexture texture)
@@ -109,30 +119,50 @@ namespace Veldrid.Graphics.OpenGL
             }
         }
 
-        public override DeviceTexture2D CreateTexture(IntPtr pixelData, int width, int height, int pixelSizeInBytes, PixelFormat format)
+        public override DeviceTexture2D CreateTexture(
+            int mipLevels,
+            int width,
+            int height,
+            PixelFormat format,
+            DeviceTextureCreateOptions createOptions)
         {
-            return new OpenGLTexture2D(width, height, format, pixelData);
-        }
+            OpenTK.Graphics.OpenGL.PixelFormat pixelFormat = OpenGLFormats.MapPixelFormat(format);
+            PixelInternalFormat pixelInternalFormat = OpenGLFormats.MapPixelInternalFormat(format);
 
-        public override DeviceTexture2D CreateTexture<T>(T[] pixelData, int width, int height, int pixelSizeInBytes, PixelFormat format)
-        {
-            return OpenGLTexture2D.Create(pixelData, width, height, pixelSizeInBytes, format);
-        }
-
-        public override DeviceTexture2D CreateDepthTexture(int width, int height, int pixelSizeInBytes, PixelFormat format)
-        {
-            if (format != PixelFormat.Alpha_UInt16)
+            if (createOptions == DeviceTextureCreateOptions.DepthStencil)
             {
-                throw new NotImplementedException("Alpha_UInt16 is the only supported depth texture format.");
+                if (format != PixelFormat.R16_UInt)
+                {
+                    throw new NotImplementedException("R16_UInt is the only supported depth texture format.");
+                }
+
+                pixelFormat = OpenTK.Graphics.OpenGL.PixelFormat.DepthComponent;
+                pixelInternalFormat = PixelInternalFormat.DepthComponent16;
             }
 
             return new OpenGLTexture2D(
+                mipLevels,
                 width,
                 height,
-                PixelFormat.Alpha_UInt16,
-                PixelInternalFormat.DepthComponent16,
-                OpenTK.Graphics.OpenGL.PixelFormat.DepthComponent,
-                PixelType.UnsignedShort);
+                format,
+                pixelInternalFormat,
+                pixelFormat,
+                OpenGLFormats.MapPixelType(format));
+        }
+
+        protected override SamplerState CreateSamplerStateCore(
+            SamplerAddressMode addressU,
+            SamplerAddressMode addressV,
+            SamplerAddressMode addressW,
+            SamplerFilter filter,
+            int maxAnisotropy,
+            RgbaFloat borderColor,
+            DepthComparison comparison,
+            int minimumLod,
+            int maximumLod,
+            int lodBias)
+        {
+            return new OpenGLSamplerState(addressU, addressV, addressW, filter, maxAnisotropy, borderColor, comparison, minimumLod, maximumLod, lodBias);
         }
 
         public override CubemapTexture CreateCubemapTexture(
@@ -164,47 +194,27 @@ namespace Veldrid.Graphics.OpenGL
             return new OpenGLVertexBuffer(isDynamic);
         }
 
-        public override BlendState CreateCustomBlendState(bool isBlendEnabled, Blend srcBlend, Blend destBlend, BlendFunction blendFunc)
+        protected override BlendState CreateCustomBlendStateCore(
+            bool isBlendEnabled,
+            Blend srcAlpha, Blend destAlpha, BlendFunction alphaBlendFunc,
+            Blend srcColor, Blend destColor, BlendFunction colorBlendFunc,
+            RgbaFloat blendFactor)
         {
-            return new OpenGLBlendState(isBlendEnabled, srcBlend, destBlend, blendFunc, srcBlend, destBlend, blendFunc);
+            return new OpenGLBlendState(isBlendEnabled, srcAlpha, destAlpha, alphaBlendFunc, srcColor, destColor, colorBlendFunc, blendFactor);
         }
 
-        public override BlendState CreateCustomBlendState(bool isBlendEnabled, Blend srcAlpha, Blend destAlpha, BlendFunction alphaBlendFunc, Blend srcColor, Blend destColor, BlendFunction colorBlendFunc)
-        {
-            return new OpenGLBlendState(isBlendEnabled, srcAlpha, destAlpha, alphaBlendFunc, srcColor, destColor, colorBlendFunc);
-        }
-
-        public override DepthStencilState CreateDepthStencilState(bool isDepthEnabled, DepthComparison comparison, bool isDepthWriteEnabled)
+        protected override DepthStencilState CreateDepthStencilStateCore(bool isDepthEnabled, DepthComparison comparison, bool isDepthWriteEnabled)
         {
             return new OpenGLDepthStencilState(isDepthEnabled, comparison, isDepthWriteEnabled);
         }
 
-        public override RasterizerState CreateRasterizerState(
+        protected override RasterizerState CreateRasterizerStateCore(
             FaceCullingMode cullMode,
             TriangleFillMode fillMode,
             bool isDepthClipEnabled,
             bool isScissorTestEnabled)
         {
             return new OpenGLRasterizerState(cullMode, fillMode, isDepthClipEnabled, isScissorTestEnabled);
-        }
-
-        public override void AddShaderLoader(ShaderLoader loader)
-        {
-            _shaderLoaders.Add(loader);
-        }
-
-        private Stream GetShaderStream(string name)
-        {
-            foreach (var loader in _shaderLoaders)
-            {
-                Stream s;
-                if (loader.TryOpenShader(name, s_shaderFileExtension, out s))
-                {
-                    return s;
-                }
-            }
-
-            throw new InvalidOperationException("No registered loader was able to find shader: " + name);
         }
     }
 }

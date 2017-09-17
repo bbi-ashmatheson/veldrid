@@ -1,9 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Drawing;
 using System.Numerics;
-using System.Threading;
-using Veldrid.Platform;
 
 namespace Veldrid.Graphics
 {
@@ -18,38 +15,28 @@ namespace Veldrid.Graphics
         private readonly Vector2 _topLeftUvCoordinate;
         private readonly Vector2 _bottomRightUvCoordinate;
 
-        private int _needsResizing;
-
         // Device State
         private Framebuffer _framebuffer;
         private VertexBuffer[] _vertexBuffers = new VertexBuffer[MaxVertexBuffers];
         private IndexBuffer _indexBuffer;
-        private Material _material;
         private Rectangle _scissorRectangle;
         private Viewport _viewport;
         private BlendState _blendState;
         private DepthStencilState _depthStencilState;
         private RasterizerState _rasterizerState;
         private ShaderSet _shaderSet;
-        private ShaderConstantBindings _constantBindings;
-        private ShaderTextureBindingSlots _textureBindingSlots;
+        private ShaderResourceBindingSlots _resourceBindingSlots;
 
-        /// <summary>Storage for shader texture input providers.</summary>
-        public Dictionary<string, ContextDeviceBinding<DeviceTexture>> TextureProviders { get; } = new Dictionary<string, ContextDeviceBinding<DeviceTexture>>();
+        protected readonly Dictionary<int, DeviceTexture> _boundTexturesBySlot = new Dictionary<int, DeviceTexture>();
+        protected readonly Dictionary<int, SamplerState> _boundSamplersBySlot = new Dictionary<int, SamplerState>();
 
-        private readonly Dictionary<string, BufferProviderPair> _bufferProviderPairs = new Dictionary<string, BufferProviderPair>();
-
-        public RenderContext(Window window)
+        public RenderContext()
         {
-            Window = window;
-            window.Resized += () => _needsResizing = 1;
-
             _topLeftUvCoordinate = GetTopLeftUvCoordinate();
             _bottomRightUvCoordinate = GetBottomRightUvCoordinate();
         }
 
-        /// <summary>The window to which this RenderContext renders.</summary>
-        public Window Window { get; }
+        public GraphicsBackend BackendType => PlatformGetGraphicsBackend();
 
         /// <summary>Gets or sets the color which is used when clearing the Framebuffer when ClearBuffer() is called.</summary>
         public virtual RgbaFloat ClearColor { get; set; } = RgbaFloat.CornflowerBlue;
@@ -59,7 +46,7 @@ namespace Veldrid.Graphics
 
         /// <summary>An event which fires when the window is resized.
         /// When a resize is detected, the next call to ClearBuffer will trigger this event.</summary>
-        public event Action WindowResized;
+        public event Action<int, int> WindowResized;
 
         /// <summary>Gets or sets the VertexBuffer in slot 0.</summary>
         public VertexBuffer VertexBuffer
@@ -68,10 +55,34 @@ namespace Veldrid.Graphics
             set { SetVertexBufferCore(0, value); }
         }
 
-        public void SetVertexBuffer(VertexBuffer vb)
+        public void SetSamplerState(int slot, SamplerState samplerState)
         {
-            SetVertexBufferCore(0, vb);
+            // TODO : Fix state tracking in new resource binding system.
+            // Most likely, this should just be done per-backend.
+            // if (!_boundSamplersBySlot.TryGetValue(slot, out BoundSamplerStateInfo bssi) || bssi.SamplerState != samplerState)
+            {
+                PlatformSetSamplerState(slot, samplerState);
+                _boundSamplersBySlot[slot] = samplerState;
+            }
         }
+
+        public SamplerState PointSampler
+            => _pointSampler ?? (_pointSampler = ResourceFactory.CreateSamplerState(
+                SamplerAddressMode.Wrap, SamplerAddressMode.Wrap, SamplerAddressMode.Wrap,
+                SamplerFilter.MinMagMipPoint, 1, RgbaFloat.Black, DepthComparison.Always, 0, int.MaxValue, 0));
+        private SamplerState _pointSampler;
+
+        public SamplerState LinearSampler
+            => _linearSampler ?? (_linearSampler = ResourceFactory.CreateSamplerState(
+                SamplerAddressMode.Wrap, SamplerAddressMode.Wrap, SamplerAddressMode.Wrap,
+                SamplerFilter.MinMagMipLinear, 1, RgbaFloat.Black, DepthComparison.Always, 0, int.MaxValue, 0));
+        private SamplerState _linearSampler;
+
+        public SamplerState Anisox4Sampler
+            => _anisox4Sampler ?? (_anisox4Sampler = ResourceFactory.CreateSamplerState(
+                SamplerAddressMode.Wrap, SamplerAddressMode.Wrap, SamplerAddressMode.Wrap,
+                SamplerFilter.Anisotropic, 4, RgbaFloat.Black, DepthComparison.Always, 0, int.MaxValue, 0));
+        private SamplerState _anisox4Sampler;
 
         /// <summary>Changes the active VertexBuffer.</summary>
         public void SetVertexBuffer(int slot, VertexBuffer vb)
@@ -97,90 +108,61 @@ namespace Veldrid.Graphics
         public IndexBuffer IndexBuffer
         {
             get { return _indexBuffer; }
-            set { SetIndexBuffer(value); }
-        }
-
-        /// <summary>Changes the active IndexBuffer.</summary>
-        public void SetIndexBuffer(IndexBuffer ib)
-        {
-            if (ib != _indexBuffer)
+            set
             {
-                PlatformSetIndexBuffer(ib);
-                _indexBuffer = ib;
-            }
-        }
-
-        /// <summary>Gets or sets the active Material.</summary>
-        public Material Material
-        {
-            get { return _material; }
-            set { SetMaterial(value); }
-        }
-
-        /// <summary>Changes the active Material.</summary>
-        public void SetMaterial(Material material)
-        {
-            _material = material;
-            SetShaderSet(material.ShaderSet);
-            SetShaderConstantBindings(material.ConstantBindings);
-            SetTextureBindingSlots(material.TextureBindingSlots);
-            foreach (var defaultBinding in material.DefaultTextureBindings)
-            {
-                SetTexture(defaultBinding.Slot, defaultBinding.TextureBinding);
+                if (value != _indexBuffer)
+                {
+                    PlatformSetIndexBuffer(value);
+                    _indexBuffer = value;
+                }
             }
         }
 
         public ShaderSet ShaderSet
         {
             get { return _shaderSet; }
-            set { SetShaderSet(value); }
-        }
-
-        public void SetShaderSet(ShaderSet shaderSet)
-        {
-            if (_shaderSet != shaderSet)
+            set
             {
-                PlatformSetShaderSet(shaderSet);
-                _shaderSet = shaderSet;
+                if (_shaderSet != value)
+                {
+                    PlatformSetShaderSet(value);
+                    _shaderSet = value;
+                }
             }
         }
 
-        public ShaderConstantBindings ShaderConstantBindings
+        public ShaderResourceBindingSlots ShaderResourceBindingSlots
         {
-            get { return _constantBindings; }
-            set { SetShaderConstantBindings(value); }
-        }
-
-        public void SetShaderConstantBindings(ShaderConstantBindings shaderConstantBindings)
-        {
-            if (_constantBindings != shaderConstantBindings)
+            get { return _resourceBindingSlots; }
+            set
             {
-                PlatformSetShaderConstantBindings(shaderConstantBindings);
-                _constantBindings = shaderConstantBindings;
+                if (_resourceBindingSlots != value)
+                {
+                    PlatformSetShaderResourceBindingSlots(value);
+                    _resourceBindingSlots = value;
+                }
             }
         }
 
-        public ShaderTextureBindingSlots ShaderTextureBindingSlots
+        public void SetConstantBuffer(int slot, ConstantBuffer cb)
         {
-            get { return _textureBindingSlots; }
-            set { SetTextureBindingSlots(value); }
-        }
-
-        public void SetTextureBindingSlots(ShaderTextureBindingSlots bindingSlots)
-        {
-            if (_textureBindingSlots != bindingSlots)
+            if (_resourceBindingSlots == null)
             {
-                PlatformSetShaderTextureBindingSlots(bindingSlots);
-                _textureBindingSlots = bindingSlots;
+                throw new VeldridException(
+                    "Cannot call SetConstantBuffer when ShaderResourceBindingSlots has not been set.");
             }
+
+            PlatformSetConstantBuffer(slot, cb);
         }
 
         public void SetTexture(int slot, ShaderTextureBinding textureBinding)
         {
-            if (_textureBindingSlots == null)
+            if (_resourceBindingSlots == null)
             {
-                throw new InvalidOperationException("Cannot call SetTexture when TextureBindingSlots has not been set.");
+                throw new VeldridException("Cannot call SetTexture when TextureBindingSlots has not been set.");
             }
+
+            _boundTexturesBySlot[slot] = textureBinding.BoundTexture;
 
             PlatformSetTexture(slot, textureBinding);
         }
@@ -260,14 +242,8 @@ namespace Veldrid.Graphics
         /// The color is cleared to the value stored in ClearColor. </summary>
         public void ClearBuffer()
         {
-            if (Interlocked.CompareExchange(ref _needsResizing, 0, 1) == 1)
-            {
-                OnWindowResized();
-            }
-
             PlatformClearBuffer();
             NullInputs();
-            FlushConstantBufferData();
         }
 
         /// <summary>Clears the current Framebuffer's color and depth buffers.
@@ -437,55 +413,15 @@ namespace Veldrid.Graphics
         /// <summary>Gets the bottom right UV coordinate of a standard plane.</summary>
         public Vector2 BottomRightUv => _bottomRightUvCoordinate;
 
-        /// <summary>Gets a DeviceTexture binding by name.</summary>
-        public ContextDeviceBinding<DeviceTexture> GetTextureContextBinding(string name)
+        public void ResizeMainWindow(int width, int height)
         {
-            ContextDeviceBinding<DeviceTexture> value;
-            if (!TextureProviders.TryGetValue(name, out value))
-            {
-                value = new ContextDeviceBinding<DeviceTexture>();
-                TextureProviders.Add(name, value);
-            }
-
-            return value;
+            OnWindowResized(width, height);
         }
 
-        public void RegisterGlobalDataProvider(string name, ConstantBufferDataProvider provider)
+        protected void OnWindowResized(int width, int height)
         {
-            BufferProviderPair pair;
-            if (_bufferProviderPairs.TryGetValue(name, out pair))
-            {
-                ChangeableProvider changeable = (ChangeableProvider)pair.DataProvider;
-                changeable.DataProvider = provider;
-            }
-            else
-            {
-                var constantBuffer = ResourceFactory.CreateConstantBuffer(provider.DataSizeInBytes);
-                var newProvider = provider is ChangeableProvider ? provider : new ChangeableProvider(provider);
-                _bufferProviderPairs.Add(name, new BufferProviderPair(constantBuffer, newProvider));
-            }
-        }
-
-        public BufferProviderPair GetNamedGlobalBufferProviderPair(string name)
-        {
-            BufferProviderPair pair;
-            if (!_bufferProviderPairs.TryGetValue(name, out pair))
-            {
-                throw new InvalidOperationException("No provider registered with name " + name);
-            }
-
-            return pair;
-        }
-
-        public IEnumerable<KeyValuePair<string, BufferProviderPair>> GetAllGlobalBufferProviderPairs()
-        {
-            return _bufferProviderPairs;
-        }
-
-        protected void OnWindowResized()
-        {
-            PlatformResize();
-            WindowResized?.Invoke();
+            PlatformResize(width, height);
+            WindowResized?.Invoke(width, height);
         }
 
         protected void PostContextCreated()
@@ -510,7 +446,7 @@ namespace Veldrid.Graphics
 
         protected abstract void PlatformSwapBuffers();
 
-        protected abstract void PlatformResize();
+        protected abstract void PlatformResize(int width, int height);
 
         protected abstract void PlatformSetVertexBuffer(int slot, VertexBuffer vb);
 
@@ -530,15 +466,19 @@ namespace Veldrid.Graphics
 
         protected abstract void PlatformSetShaderSet(ShaderSet shaderSet);
 
-        protected abstract void PlatformSetShaderConstantBindings(ShaderConstantBindings shaderConstantBindings);
+        protected abstract void PlatformSetShaderResourceBindingSlots(ShaderResourceBindingSlots shaderConstantBindings);
 
-        protected abstract void PlatformSetShaderTextureBindingSlots(ShaderTextureBindingSlots bindingSlots);
+        protected abstract void PlatformSetConstantBuffer(int slot, ConstantBuffer cb);
 
         protected abstract void PlatformSetTexture(int slot, ShaderTextureBinding textureBinding);
+
+        protected abstract void PlatformSetSamplerState(int slot, SamplerState samplerState);
 
         protected abstract void PlatformClearMaterialResourceBindings();
 
         protected abstract void PlatformDispose();
+
+        protected abstract GraphicsBackend PlatformGetGraphicsBackend();
 
         ///<summary>Disposes all resources owned by this RenderContext.</summary>
         public void Dispose()
@@ -559,124 +499,7 @@ namespace Veldrid.Graphics
             }
 
             _indexBuffer = null;
-            _material = null;
-            _constantBindings = null;
-        }
-
-        private void FlushConstantBufferData()
-        {
-            foreach (var kvp in _bufferProviderPairs)
-            {
-                kvp.Value.UpdateData();
-            }
-        }
-    }
-
-    public class ContextDeviceBinding<T>
-    {
-        private T _value;
-        private bool _valid;
-
-        public T Value
-        {
-            get
-            {
-                if (!_valid)
-                {
-                    throw new InvalidOperationException($"No value has been bound to context binding of type {typeof(T).FullName}");
-                }
-
-                return _value;
-            }
-            set
-            {
-                _value = value;
-                _valid = true;
-            }
-        }
-
-        public ContextDeviceBinding(T value)
-        {
-            _value = value;
-            _valid = true;
-        }
-
-        public ContextDeviceBinding()
-        {
-        }
-    }
-
-    public class ChangeableProvider : ConstantBufferDataProvider
-    {
-        private ConstantBufferDataProvider _dataProvider;
-
-        public ConstantBufferDataProvider DataProvider
-        {
-            get { return _dataProvider; }
-            set
-            {
-                _dataProvider.DataChanged -= OnParentDataChanged;
-                _dataProvider = value;
-                _dataProvider.DataChanged += OnParentDataChanged;
-                OnParentDataChanged();
-            }
-        }
-
-        public event Action DataChanged;
-
-        public ChangeableProvider(ConstantBufferDataProvider dataProvider)
-        {
-            _dataProvider = dataProvider;
-            DataSizeInBytes = dataProvider.DataSizeInBytes;
-            dataProvider.DataChanged += OnParentDataChanged;
-        }
-
-        private void OnParentDataChanged()
-        {
-            DataChanged?.Invoke();
-        }
-
-        public int DataSizeInBytes { get; }
-
-        public void SetData(ConstantBuffer buffer)
-        {
-            _dataProvider.SetData(buffer);
-        }
-    }
-
-    public class BufferProviderPair : IDisposable
-    {
-        public readonly ConstantBuffer ConstantBuffer;
-        public readonly ConstantBufferDataProvider DataProvider;
-
-        private bool _dirty;
-
-        public BufferProviderPair(ConstantBuffer buffer, ConstantBufferDataProvider provider)
-        {
-            ConstantBuffer = buffer;
-            DataProvider = provider;
-            provider.DataChanged += OnDataChanged;
-            _dirty = true;
-            UpdateData();
-        }
-
-        private void OnDataChanged()
-        {
-            _dirty = true;
-        }
-
-        public void UpdateData()
-        {
-            if (_dirty)
-            {
-                DataProvider.SetData(ConstantBuffer);
-                _dirty = false;
-            }
-        }
-
-        public void Dispose()
-        {
-            DataProvider.DataChanged -= OnDataChanged;
+            _resourceBindingSlots = null;
         }
     }
 }

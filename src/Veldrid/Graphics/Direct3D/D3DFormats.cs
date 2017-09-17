@@ -6,7 +6,7 @@ namespace Veldrid.Graphics.Direct3D
 {
     internal class D3DFormats
     {
-        internal static Format ConvertPixelFormat(PixelFormat format)
+        internal static Format VeldridToD3DPixelFormat(PixelFormat format)
         {
             switch (format)
             {
@@ -14,16 +14,143 @@ namespace Veldrid.Graphics.Direct3D
                     return Format.R32G32B32A32_Float;
                 case PixelFormat.R8_UInt:
                     return Format.R8_UInt;
-                case PixelFormat.Alpha_UInt8:
-                    return Format.A8_UNorm;
-                case PixelFormat.R8_G8_B8_A8:
+                case PixelFormat.R16_UInt:
+                    return Format.R16_UInt;
+                case PixelFormat.R8_G8_B8_A8_UInt:
                     return Format.R8G8B8A8_UNorm;
+                case PixelFormat.B8_G8_R8_A8_UInt:
+                    return Format.B8G8R8A8_UNorm;
                 default:
                     throw Illegal.Value<PixelFormat>();
             }
         }
 
-        internal static Format ConvertIndexFormat(IndexFormat format)
+        internal static SamplerAddressMode D3DToVeldridSamplerAddressMode(TextureAddressMode mode)
+        {
+            switch (mode)
+            {
+                case TextureAddressMode.Wrap:
+                    return SamplerAddressMode.Wrap;
+                case TextureAddressMode.Mirror:
+                    return SamplerAddressMode.Mirror;
+                case TextureAddressMode.Clamp:
+                    return SamplerAddressMode.Clamp;
+                case TextureAddressMode.Border:
+                    return SamplerAddressMode.Border;
+                default:
+                    throw Illegal.Value<TextureAddressMode>();
+            }
+        }
+
+        internal static TextureAddressMode VeldridToD3DSamplerAddressMode(SamplerAddressMode mode)
+        {
+            switch (mode)
+            {
+                case SamplerAddressMode.Wrap:
+                    return TextureAddressMode.Wrap;
+                case SamplerAddressMode.Mirror:
+                    return TextureAddressMode.Mirror;
+                case SamplerAddressMode.Clamp:
+                    return TextureAddressMode.Clamp;
+                case SamplerAddressMode.Border:
+                    return TextureAddressMode.Border;
+                default:
+                    throw Illegal.Value<SamplerAddressMode>();
+            }
+        }
+
+        internal static SamplerFilter D3DToVeldridSamplerFilter(Filter filter)
+        {
+            switch (filter)
+            {
+                case Filter.MinMagMipPoint:
+                    return SamplerFilter.MinMagMipPoint;
+                case Filter.MinMagPointMipLinear:
+                    return SamplerFilter.MinMagPointMipLinear;
+                case Filter.MinPointMagLinearMipPoint:
+                    return SamplerFilter.MinPointMagLinearMipPoint;
+                case Filter.MinPointMagMipLinear:
+                    return SamplerFilter.MinPointMagMipLinear;
+                case Filter.MinLinearMagMipPoint:
+                    return SamplerFilter.MinLinearMagMipPoint;
+                case Filter.MinLinearMagPointMipLinear:
+                    return SamplerFilter.MinLinearMagPointMipLinear;
+                case Filter.MinMagLinearMipPoint:
+                    return SamplerFilter.MinMagLinearMipPoint;
+                case Filter.MinMagMipLinear:
+                    return SamplerFilter.MinMagMipLinear;
+                case Filter.Anisotropic:
+                    return SamplerFilter.Anisotropic;
+                case Filter.ComparisonMinMagMipPoint:
+                    return SamplerFilter.ComparisonMinMagMipPoint;
+                case Filter.ComparisonMinMagPointMipLinear:
+                    return SamplerFilter.ComparisonMinMagPointMipLinear;
+                case Filter.ComparisonMinPointMagLinearMipPoint:
+                    return SamplerFilter.ComparisonMinPointMagLinearMipPoint;
+                case Filter.ComparisonMinPointMagMipLinear:
+                    return SamplerFilter.ComparisonMinPointMagMipLinear;
+                case Filter.ComparisonMinLinearMagMipPoint:
+                    return SamplerFilter.ComparisonMinLinearMagMipPoint;
+                case Filter.ComparisonMinLinearMagPointMipLinear:
+                    return SamplerFilter.ComparisonMinLinearMagPointMipLinear;
+                case Filter.ComparisonMinMagLinearMipPoint:
+                    return SamplerFilter.ComparisonMinMagLinearMipPoint;
+                case Filter.ComparisonMinMagMipLinear:
+                    return SamplerFilter.ComparisonMinMagMipLinear;
+                case Filter.ComparisonAnisotropic:
+                    return SamplerFilter.ComparisonAnisotropic;
+                default:
+                    throw Illegal.Value<Filter>();
+            }
+        }
+
+        internal static Filter VeldridToD3DSamplerFilter(SamplerFilter filter)
+        {
+            switch (filter)
+            {
+                case SamplerFilter.MinMagMipPoint:
+                    return Filter.MinMagMipPoint;
+                case SamplerFilter.MinMagPointMipLinear:
+                    return Filter.MinMagPointMipLinear;
+                case SamplerFilter.MinPointMagLinearMipPoint:
+                    return Filter.MinPointMagLinearMipPoint;
+                case SamplerFilter.MinPointMagMipLinear:
+                    return Filter.MinPointMagMipLinear;
+                case SamplerFilter.MinLinearMagMipPoint:
+                    return Filter.MinLinearMagMipPoint;
+                case SamplerFilter.MinLinearMagPointMipLinear:
+                    return Filter.MinLinearMagPointMipLinear;
+                case SamplerFilter.MinMagLinearMipPoint:
+                    return Filter.MinMagLinearMipPoint;
+                case SamplerFilter.MinMagMipLinear:
+                    return Filter.MinMagMipLinear;
+                case SamplerFilter.Anisotropic:
+                    return Filter.Anisotropic;
+                case SamplerFilter.ComparisonMinMagMipPoint:
+                    return Filter.ComparisonMinMagMipPoint;
+                case SamplerFilter.ComparisonMinMagPointMipLinear:
+                    return Filter.ComparisonMinMagPointMipLinear;
+                case SamplerFilter.ComparisonMinPointMagLinearMipPoint:
+                    return Filter.ComparisonMinPointMagLinearMipPoint;
+                case SamplerFilter.ComparisonMinPointMagMipLinear:
+                    return Filter.ComparisonMinPointMagMipLinear;
+                case SamplerFilter.ComparisonMinLinearMagMipPoint:
+                    return Filter.ComparisonMinLinearMagMipPoint;
+                case SamplerFilter.ComparisonMinLinearMagPointMipLinear:
+                    return Filter.ComparisonMinLinearMagPointMipLinear;
+                case SamplerFilter.ComparisonMinMagLinearMipPoint:
+                    return Filter.ComparisonMinMagLinearMipPoint;
+                case SamplerFilter.ComparisonMinMagMipLinear:
+                    return Filter.ComparisonMinMagMipLinear;
+                case SamplerFilter.ComparisonAnisotropic:
+                    return Filter.ComparisonAnisotropic;
+                default:
+                    throw Illegal.Value<SamplerFilter>();
+            }
+        }
+
+
+        internal static Format VeldridToD3DIndexFormat(IndexFormat format)
         {
             switch (format)
             {
@@ -31,14 +158,12 @@ namespace Veldrid.Graphics.Direct3D
                     return Format.R32_UInt;
                 case IndexFormat.UInt16:
                     return Format.R16_UInt;
-                case IndexFormat.UInt8:
-                    return Format.R8_UInt;
                 default:
                     throw Illegal.Value<IndexFormat>();
             }
         }
 
-        internal static FillMode ConvertFillMode(TriangleFillMode fillMode)
+        internal static FillMode VeldridToD3DTriangleFillMode(TriangleFillMode fillMode)
         {
             switch (fillMode)
             {
@@ -51,7 +176,7 @@ namespace Veldrid.Graphics.Direct3D
             }
         }
 
-        internal static CullMode ConvertCullMode(FaceCullingMode cullMode)
+        internal static CullMode VeldridToD3DFaceCullingMode(FaceCullingMode cullMode)
         {
             switch (cullMode)
             {
@@ -66,7 +191,7 @@ namespace Veldrid.Graphics.Direct3D
             }
         }
 
-        public static BlendOption ConvertBlend(Blend blendFactor)
+        public static BlendOption VeldridToD3DBlend(Blend blendFactor)
         {
             switch (blendFactor)
             {
@@ -99,7 +224,7 @@ namespace Veldrid.Graphics.Direct3D
             }
         }
 
-        public static BlendOperation ConvertBlendFunction(BlendFunction function)
+        public static BlendOperation VeldridToD3DBlendFunction(BlendFunction function)
         {
             switch (function)
             {
@@ -117,7 +242,7 @@ namespace Veldrid.Graphics.Direct3D
                     throw Illegal.Value<BlendFunction>();
             }
         }
-        public static Comparison ConvertDepthComparison(DepthComparison dc)
+        public static Comparison VeldridToD3DDepthComparison(DepthComparison dc)
         {
             switch (dc)
             {
@@ -142,6 +267,31 @@ namespace Veldrid.Graphics.Direct3D
             }
         }
 
+        internal static DepthComparison D3DToVeldridDepthComparison(Comparison comparisonFunction)
+        {
+            switch (comparisonFunction)
+            {
+                case Comparison.Never:
+                    return DepthComparison.Never;
+                case Comparison.Less:
+                    return DepthComparison.Less;
+                case Comparison.Equal:
+                    return DepthComparison.Equal;
+                case Comparison.LessEqual:
+                    return DepthComparison.LessEqual;
+                case Comparison.Greater:
+                    return DepthComparison.Greater;
+                case Comparison.NotEqual:
+                    return DepthComparison.NotEqual;
+                case Comparison.GreaterEqual:
+                    return DepthComparison.GreaterEqual;
+                case Comparison.Always:
+                    return DepthComparison.Always;
+                default:
+                    throw Illegal.Value<Comparison>();
+            }
+        }
+
         public static Format MapFormatForShaderResourceView(Format format)
         {
             switch (format)
@@ -153,7 +303,7 @@ namespace Veldrid.Graphics.Direct3D
             }
         }
 
-        public static SharpDX.Direct3D.PrimitiveTopology ConvertPrimitiveTopology(PrimitiveTopology primitiveTopology)
+        public static SharpDX.Direct3D.PrimitiveTopology VeldridToD3DPrimitiveTopology(PrimitiveTopology primitiveTopology)
         {
             switch (primitiveTopology)
             {
@@ -172,7 +322,7 @@ namespace Veldrid.Graphics.Direct3D
             }
         }
 
-        public static InputClassification ConvertInputClass(VertexElementInputClass inputClass)
+        public static InputClassification VeldridToD3DVertexElementInputClass(VertexElementInputClass inputClass)
         {
             switch (inputClass)
             {
@@ -226,6 +376,16 @@ namespace Veldrid.Graphics.Direct3D
                 case Format.R8G8B8A8_UInt:
                 case Format.R8G8B8A8_SNorm:
                 case Format.R8G8B8A8_SInt:
+                case Format.R9G9B9E5_Sharedexp:
+                case Format.R8G8_B8G8_UNorm:
+                case Format.G8R8_G8B8_UNorm:
+                case Format.B8G8R8A8_UNorm:
+                case Format.B8G8R8X8_UNorm:
+                case Format.R10G10B10_Xr_Bias_A2_UNorm:
+                case Format.B8G8R8A8_Typeless:
+                case Format.B8G8R8A8_UNorm_SRgb:
+                case Format.B8G8R8X8_Typeless:
+                case Format.B8G8R8X8_UNorm_SRgb:
                 case Format.R16G16_Typeless:
                 case Format.R16G16_Float:
                 case Format.R16G16_UNorm:
@@ -264,9 +424,6 @@ namespace Veldrid.Graphics.Direct3D
                     return 1;
                 case Format.R1_UNorm:
                     return 1;
-                case Format.R9G9B9E5_Sharedexp:
-                case Format.R8G8_B8G8_UNorm:
-                case Format.G8R8_G8B8_UNorm:
                 case Format.BC1_Typeless:
                 case Format.BC1_UNorm:
                 case Format.BC1_UNorm_SRgb:
@@ -284,13 +441,6 @@ namespace Veldrid.Graphics.Direct3D
                 case Format.BC5_SNorm:
                 case Format.B5G6R5_UNorm:
                 case Format.B5G5R5A1_UNorm:
-                case Format.B8G8R8A8_UNorm:
-                case Format.B8G8R8X8_UNorm:
-                case Format.R10G10B10_Xr_Bias_A2_UNorm:
-                case Format.B8G8R8A8_Typeless:
-                case Format.B8G8R8A8_UNorm_SRgb:
-                case Format.B8G8R8X8_Typeless:
-                case Format.B8G8R8X8_UNorm_SRgb:
                 case Format.BC6H_Typeless:
                 case Format.BC6H_Uf16:
                 case Format.BC6H_Sf16:

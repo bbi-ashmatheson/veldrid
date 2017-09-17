@@ -19,6 +19,7 @@ namespace Veldrid.RenderDemo.ForwardRendering
 
         private Framebuffer _shadowMapFramebuffer;
         private DeviceTexture2D _depthTexture;
+        private ShaderTextureBinding _depthTextureBinding;
 
         public bool Enabled { get; set; } = true;
 
@@ -43,10 +44,16 @@ namespace Veldrid.RenderDemo.ForwardRendering
 
         private void InitializeContextObjects(RenderContext rc)
         {
-            _depthTexture = rc.ResourceFactory.CreateDepthTexture(DepthMapWidth, DepthMapHeight, sizeof(ushort), PixelFormat.Alpha_UInt16);
+            _depthTexture = rc.ResourceFactory.CreateTexture(
+                1,
+                DepthMapWidth,
+                DepthMapHeight,
+                PixelFormat.R16_UInt,
+                DeviceTextureCreateOptions.DepthStencil);
+            _depthTextureBinding = rc.ResourceFactory.CreateShaderTextureBinding(_depthTexture);
             _shadowMapFramebuffer = rc.ResourceFactory.CreateFramebuffer();
             _shadowMapFramebuffer.DepthTexture = _depthTexture;
-            rc.GetTextureContextBinding(_contextBindingName).Value = _depthTexture;
+            SharedTextures.SetTextureBinding(_contextBindingName, _depthTextureBinding);
         }
 
         public void ExecuteStage(VisibiltyManager visibilityManager, Vector3 viewPosition)
@@ -76,11 +83,17 @@ namespace Veldrid.RenderDemo.ForwardRendering
         {
             int width = DepthMapWidth;
             int height = DepthMapHeight;
-            var cpuDepthTexture = new RawTextureDataArray<ushort>(width, height, sizeof(ushort), PixelFormat.Alpha_UInt16);
-            _depthTexture.CopyTo(cpuDepthTexture);
+            var cpuDepthTexture = new RawTextureDataArray<ushort>(width, height, sizeof(ushort), PixelFormat.R16_UInt);
+            _depthTexture.GetTextureData(0, cpuDepthTexture.PixelData);
 
-            ImageSharp.Image image = new ImageSharp.Image(width, height);
-            PixelFormatConversion.ConvertPixelsUInt16DepthToRgbaFloat(width * height, cpuDepthTexture.PixelData, image.Pixels);
+            ImageSharp.Image<ImageSharp.Rgba32> image = new ImageSharp.Image<ImageSharp.Rgba32>(width, height);
+            unsafe
+            {
+                fixed (ImageSharp.Rgba32* pixelsPtr = &image.Pixels.DangerousGetPinnableReference())
+                {
+                    PixelFormatConversion.ConvertPixelsUInt16DepthToRgbaFloat(width * height, cpuDepthTexture.PixelData, pixelsPtr);
+                }
+            }
             ImageSharpTexture rgbaDepthTexture = new ImageSharpTexture(image);
             Console.WriteLine($"Saving file: {width} x {height}, ratio:{(double)width / height}");
             rgbaDepthTexture.SaveToFile(Environment.TickCount + ".png");

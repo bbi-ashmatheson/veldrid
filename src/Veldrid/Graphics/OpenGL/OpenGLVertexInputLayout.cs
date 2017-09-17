@@ -6,78 +6,13 @@ namespace Veldrid.Graphics.OpenGL
 {
     public class OpenGLVertexInputLayout : VertexInputLayout
     {
-        public MaterialVertexInput[] InputDescription { get; }
-        public OpenGLMaterialVertexInput[] VBLayoutsBySlot { get; }
+        public VertexInputDescription[] InputDescriptions { get; }
+        public OpenGLVertexInput[] VBLayoutsBySlot { get; }
 
-        public OpenGLVertexInputLayout(MaterialVertexInput[] vertexInputs)
+        public OpenGLVertexInputLayout(VertexInputDescription[] vertexInputs)
         {
-            InputDescription = vertexInputs;
-            VBLayoutsBySlot = vertexInputs.Select(mvi => new OpenGLMaterialVertexInput(mvi)).ToArray();
-        }
-
-        public int SetVertexAttributes(int vertexBufferSlot, OpenGLVertexBuffer vb, int previousAttributesBound)
-        {
-            // TODO: Related to OpenGLRenderContext.PlatformSetVertexBuffer()
-            // These attributes should be lazily set on a draw call or something.
-            if (vertexBufferSlot <= VBLayoutsBySlot.Length)
-            {
-                return previousAttributesBound;
-            }
-
-            int baseSlot = GetSlotBaseIndex(vertexBufferSlot);
-            OpenGLMaterialVertexInput input = VBLayoutsBySlot[vertexBufferSlot];
-            vb.Apply();
-            for (int i = 0; i < input.Elements.Length; i++)
-            {
-                OpenGLMaterialVertexInputElement element = input.Elements[i];
-                int slot = baseSlot + i;
-                GL.EnableVertexAttribArray(slot);
-                GL.VertexAttribPointer(slot, element.ElementCount, element.Type, element.Normalized, input.VertexSizeInBytes, element.Offset);
-            }
-            for (int extraSlot = input.Elements.Length; extraSlot < previousAttributesBound; extraSlot++)
-            {
-                GL.DisableVertexAttribArray(extraSlot);
-            }
-
-            return input.Elements.Length;
-        }
-
-        public int SetVertexAttributes(VertexBuffer[] vertexBuffers, int previousAttributesBound)
-        {
-            int totalSlotsBound = 0;
-            for (int i = 0; i < VBLayoutsBySlot.Length; i++)
-            {
-                OpenGLMaterialVertexInput input = VBLayoutsBySlot[i];
-                ((OpenGLVertexBuffer)vertexBuffers[i]).Apply();
-                for (int slot = 0; slot < input.Elements.Length; slot++)
-                {
-                    OpenGLMaterialVertexInputElement element = input.Elements[slot];
-                    int actualSlot = totalSlotsBound + slot;
-                    GL.EnableVertexAttribArray(actualSlot);
-                    GL.VertexAttribPointer(actualSlot, element.ElementCount, element.Type, element.Normalized, input.VertexSizeInBytes, element.Offset);
-                    GL.VertexAttribDivisor(actualSlot, element.InstanceStepRate);
-                }
-
-                totalSlotsBound += input.Elements.Length;
-            }
-
-            for (int extraSlot = totalSlotsBound; extraSlot < previousAttributesBound; extraSlot++)
-            {
-                GL.DisableVertexAttribArray(extraSlot);
-            }
-
-            return totalSlotsBound;
-        }
-
-        private int GetSlotBaseIndex(int vertexBufferSlot)
-        {
-            int index = 0;
-            for (int i = 0; i < vertexBufferSlot; i++)
-            {
-                index += VBLayoutsBySlot[i].Elements.Length;
-            }
-
-            return index;
+            InputDescriptions = vertexInputs;
+            VBLayoutsBySlot = vertexInputs.Select(mvi => new OpenGLVertexInput(mvi)).ToArray();
         }
 
         public void Dispose()
@@ -85,32 +20,32 @@ namespace Veldrid.Graphics.OpenGL
         }
     }
 
-    public class OpenGLMaterialVertexInput
+    public class OpenGLVertexInput
     {
         public int VertexSizeInBytes { get; }
-        public OpenGLMaterialVertexInputElement[] Elements { get; }
+        public OpenGLVertexInputElement[] Elements { get; }
 
-        public OpenGLMaterialVertexInput(int vertexSizeInBytes, OpenGLMaterialVertexInputElement[] elements)
+        public OpenGLVertexInput(int vertexSizeInBytes, OpenGLVertexInputElement[] elements)
         {
             VertexSizeInBytes = vertexSizeInBytes;
             Elements = elements;
         }
 
-        public OpenGLMaterialVertexInput(MaterialVertexInput genericInput)
+        public OpenGLVertexInput(VertexInputDescription genericInput)
         {
             VertexSizeInBytes = genericInput.VertexSizeInBytes;
-            Elements = new OpenGLMaterialVertexInputElement[genericInput.Elements.Length];
+            Elements = new OpenGLVertexInputElement[genericInput.Elements.Length];
             int offset = 0;
             for (int i = 0; i < Elements.Length; i++)
             {
                 var genericElement = genericInput.Elements[i];
-                Elements[i] = new OpenGLMaterialVertexInputElement(genericElement, offset);
+                Elements[i] = new OpenGLVertexInputElement(genericElement, offset);
                 offset += genericElement.SizeInBytes;
             }
         }
     }
 
-    public struct OpenGLMaterialVertexInputElement
+    public struct OpenGLVertexInputElement : IEquatable<OpenGLVertexInputElement>
     {
         public byte SizeInBytes { get; }
         public byte ElementCount { get; }
@@ -119,7 +54,7 @@ namespace Veldrid.Graphics.OpenGL
         public bool Normalized { get; }
         public int InstanceStepRate { get; set; }
 
-        public OpenGLMaterialVertexInputElement(byte sizeInBytes, byte elementCount, VertexAttribPointerType type, int offset, bool normalized)
+        public OpenGLVertexInputElement(byte sizeInBytes, byte elementCount, VertexAttribPointerType type, int offset, bool normalized)
         {
             SizeInBytes = sizeInBytes;
             ElementCount = elementCount;
@@ -129,7 +64,7 @@ namespace Veldrid.Graphics.OpenGL
             InstanceStepRate = 0;
         }
 
-        public OpenGLMaterialVertexInputElement(
+        public OpenGLVertexInputElement(
             byte sizeInBytes,
             byte elementCount,
             VertexAttribPointerType type,
@@ -145,10 +80,10 @@ namespace Veldrid.Graphics.OpenGL
             InstanceStepRate = instanceStepRate;
         }
 
-        public OpenGLMaterialVertexInputElement(MaterialVertexInputElement genericElement, int offset)
+        public OpenGLVertexInputElement(VertexInputElement genericElement, int offset)
         {
             SizeInBytes = genericElement.SizeInBytes;
-            ElementCount = VertexFormatHelpers.GetElementCount(genericElement.ElementFormat);
+            ElementCount = FormatHelpers.GetElementCount(genericElement.ElementFormat);
             Type = GetGenericFormatType(genericElement.ElementFormat);
             Offset = offset;
             Normalized = genericElement.SemanticType == VertexSemanticType.Color && genericElement.ElementFormat == VertexElementFormat.Byte4;
@@ -170,6 +105,13 @@ namespace Veldrid.Graphics.OpenGL
                 default:
                     throw Illegal.Value<VertexElementFormat>();
             }
+        }
+
+        public bool Equals(OpenGLVertexInputElement other)
+        {
+            return SizeInBytes.Equals(other.SizeInBytes) && ElementCount.Equals(other.ElementCount)
+                && Type == other.Type && Offset.Equals(other.Offset) && Normalized.Equals(other.Normalized)
+                && InstanceStepRate.Equals(other.InstanceStepRate);
         }
     }
 }

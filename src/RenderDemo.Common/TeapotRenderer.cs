@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using Veldrid.Assets;
 using Veldrid.Graphics;
 
@@ -9,14 +10,14 @@ namespace Veldrid.RenderDemo
 {
     public class TeapotRenderer : SwappableRenderItem, IDisposable
     {
-        private readonly DynamicDataProvider<Matrix4x4> _worldProvider;
-        private readonly DependantDataProvider<Matrix4x4> _inverseTransposeWorldProvider;
-        private readonly ConstantBufferDataProvider[] _perObjectProviders;
         private readonly BoundingSphere _centeredBounds;
 
         private VertexBuffer _vertexBuffer;
         private IndexBuffer _indexBuffer;
         private Material _material;
+        private ConstantBuffer _worldBuffer;
+        private ConstantBuffer _inverseTransposeWorldBuffer;
+        private ShaderTextureBinding _textureBinding;
 
         private static ConstructedMeshInfo _teapotMesh;
 
@@ -40,10 +41,6 @@ namespace Veldrid.RenderDemo
 
         public TeapotRenderer(RenderContext rc)
         {
-            _worldProvider = new DynamicDataProvider<Matrix4x4>();
-            _inverseTransposeWorldProvider = new DependantDataProvider<Matrix4x4>(_worldProvider, CalculateInverseTranspose);
-            _perObjectProviders = new ConstantBufferDataProvider[] { _worldProvider, _inverseTransposeWorldProvider };
-
             _centeredBounds = BoundingSphere.CreateFromPoints(LoadTeapotMesh().Vertices);
 
             InitializeContextObjects(rc);
@@ -58,43 +55,40 @@ namespace Veldrid.RenderDemo
             _vertexBuffer.SetVertexData(mesh.Vertices, new VertexDescriptor(VertexPositionNormalTexture.SizeInBytes, 3, 0, IntPtr.Zero));
 
             _indexBuffer = factory.CreateIndexBuffer(mesh.Indices.Length * sizeof(int), false);
-            _indexBuffer.SetIndices(mesh.Indices, IndexFormat.UInt16);
+            _indexBuffer.SetIndices(mesh.Indices);
 
-            MaterialVertexInput materialInputs = new MaterialVertexInput(
+            VertexInputDescription materialInputs = new VertexInputDescription(
                 VertexPositionNormalTexture.SizeInBytes,
-                new MaterialVertexInputElement[]
+                new VertexInputElement[]
                 {
-                    new MaterialVertexInputElement("in_position", VertexSemanticType.Position, VertexElementFormat.Float3),
-                    new MaterialVertexInputElement("in_normal", VertexSemanticType.Normal, VertexElementFormat.Float3),
-                    new MaterialVertexInputElement("in_texCoord", VertexSemanticType.TextureCoordinate, VertexElementFormat.Float2)
+                    new VertexInputElement("in_position", VertexSemanticType.Position, VertexElementFormat.Float3),
+                    new VertexInputElement("in_normal", VertexSemanticType.Normal, VertexElementFormat.Float3),
+                    new VertexInputElement("in_texCoord", VertexSemanticType.TextureCoordinate, VertexElementFormat.Float2)
                 });
 
-            MaterialInputs<MaterialGlobalInputElement> globalInputs = new MaterialInputs<MaterialGlobalInputElement>(
-                new MaterialGlobalInputElement[]
-                {
-                    new MaterialGlobalInputElement("ProjectionMatrixBuffer", MaterialInputType.Matrix4x4, "ProjectionMatrix"),
-                    new MaterialGlobalInputElement("ViewMatrixBuffer", MaterialInputType.Matrix4x4, "ViewMatrix"),
-                    new MaterialGlobalInputElement("LightBuffer", MaterialInputType.Custom, "LightBuffer"),
-                });
-
-            MaterialInputs<MaterialPerObjectInputElement> perObjectInputs = new MaterialInputs<MaterialPerObjectInputElement>(
-                new MaterialPerObjectInputElement[]
-                {
-                    new MaterialPerObjectInputElement("WorldMatrixBuffer", MaterialInputType.Matrix4x4, _worldProvider.DataSizeInBytes),
-                    new MaterialPerObjectInputElement("InverseTransposeWorldMatrixBuffer", MaterialInputType.Matrix4x4, _inverseTransposeWorldProvider.DataSizeInBytes),
-                });
-
-            MaterialTextureInputs textureInputs = new MaterialTextureInputs(
-                new TextureDataInputElement("surfaceTexture", s_cubeTexture));
+            ShaderResourceDescription[] resources = new[]
+            {
+                new ShaderResourceDescription("ProjectionMatrixBuffer", ShaderConstantType.Matrix4x4),
+                new ShaderResourceDescription("ViewMatrixBuffer", ShaderConstantType.Matrix4x4),
+                new ShaderResourceDescription("LightBuffer", Unsafe.SizeOf<DirectionalLightBuffer>()),
+                new ShaderResourceDescription("WorldMatrixBuffer", ShaderConstantType.Matrix4x4),
+                new ShaderResourceDescription("InverseTransposeWorldMatrixBuffer", ShaderConstantType.Matrix4x4),
+                new ShaderResourceDescription("surfaceTexture", ShaderResourceType.Texture),
+                new ShaderResourceDescription("surfaceTexture", ShaderResourceType.Sampler)
+            };
 
             _material = factory.CreateMaterial(
                 rc,
                 "textured-vertex",
                 "lit-frag",
                 materialInputs,
-                globalInputs,
-                perObjectInputs,
-                textureInputs);
+                resources);
+
+            _worldBuffer = factory.CreateConstantBuffer(ShaderConstantType.Matrix4x4);
+            _inverseTransposeWorldBuffer = factory.CreateConstantBuffer(ShaderConstantType.Matrix4x4);
+
+            DeviceTexture2D deviceTex = s_cubeTexture.CreateDeviceTexture(factory);
+            _textureBinding = factory.CreateShaderTextureBinding(deviceTex);
         }
 
         public void ChangeRenderContext(AssetDatabase ad, RenderContext rc)
@@ -105,9 +99,11 @@ namespace Veldrid.RenderDemo
 
         public void Dispose()
         {
-            ((IDisposable)_vertexBuffer).Dispose();
-            ((IDisposable)_indexBuffer).Dispose();
-            ((IDisposable)_material).Dispose();
+            _vertexBuffer.Dispose();
+            _indexBuffer.Dispose();
+            _material.Dispose();
+            _worldBuffer.Dispose();
+            _inverseTransposeWorldBuffer.Dispose();
         }
 
         private Matrix4x4 CalculateInverseTranspose(Matrix4x4 m)
@@ -124,20 +120,29 @@ namespace Veldrid.RenderDemo
 
         public IList<string> GetStagesParticipated() => CommonStages.Standard;
 
-        public unsafe void Render(RenderContext context, string pipelineStage)
+        public void Render(RenderContext rc, string pipelineStage)
         {
             float rotationAmount = (float)DateTime.Now.TimeOfDay.TotalMilliseconds / 1000;
-            _worldProvider.Data =
+            Matrix4x4 worldData =
                 Matrix4x4.CreateScale(Scale)
                 * Matrix4x4.CreateFromQuaternion(Rotation)
                 * Matrix4x4.CreateTranslation(Position);
+            _worldBuffer.SetData(ref worldData, 64);
 
-            context.SetVertexBuffer(_vertexBuffer);
-            context.SetIndexBuffer(_indexBuffer);
-            context.SetMaterial(_material);
-            _material.ApplyPerObjectInputs(_perObjectProviders);
+            var inverseTransposeData = Utilities.CalculateInverseTranspose(worldData);
+            _inverseTransposeWorldBuffer.SetData(ref inverseTransposeData, 64);
 
-            context.DrawIndexedPrimitives(_teapotMesh.Indices.Length, 0);
+            rc.VertexBuffer = _vertexBuffer;
+            rc.IndexBuffer = _indexBuffer;
+            _material.Apply(rc);
+            rc.SetConstantBuffer(0, SharedDataProviders.ProjectionMatrixBuffer);
+            rc.SetConstantBuffer(1, SharedDataProviders.ViewMatrixBuffer);
+            rc.SetConstantBuffer(2, SharedDataProviders.DirectionalLightBuffer);
+            rc.SetConstantBuffer(3, _worldBuffer);
+            rc.SetConstantBuffer(4, _inverseTransposeWorldBuffer);
+            rc.SetTexture(5, _textureBinding);
+
+            rc.DrawIndexedPrimitives(_teapotMesh.Indices.Length, 0);
         }
 
         public bool Cull(ref BoundingFrustum visibleFrustum)

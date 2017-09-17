@@ -5,20 +5,18 @@ namespace Veldrid.Graphics.Direct3D
 {
     public class D3DVertexInputLayout : VertexInputLayout
     {
-        private readonly Device _device;
+        public VertexInputDescription[] InputDescriptions { get; }
 
-        public MaterialVertexInput[] InputDescription { get; }
-
-        public InputLayout DeviceLayout { get; }
-
-        public D3DVertexInputLayout(Device device, byte[] shaderBytecode, MaterialVertexInput[] vertexInputs)
+        public D3DVertexInputLayout(VertexInputDescription[] vertexInputs)
         {
-            _device = device;
-            InputDescription = vertexInputs;
-            DeviceLayout = CreateLayout(device, shaderBytecode, vertexInputs);
+            InputDescriptions = vertexInputs;
         }
 
-        private static InputLayout CreateLayout(Device device, byte[] shaderBytecode, MaterialVertexInput[] vertexInputs)
+        public void Dispose()
+        {
+        }
+
+        public static InputLayout CreateLayout(Device device, VertexInputDescription[] vertexInputs, byte[] shaderBytecode)
         {
             int count = vertexInputs.Sum(mvi => mvi.Elements.Length);
             int element = 0;
@@ -26,7 +24,7 @@ namespace Veldrid.Graphics.Direct3D
             SemanticIndices indicesTracker = new SemanticIndices();
             for (int vbSlot = 0; vbSlot < vertexInputs.Length; vbSlot++)
             {
-                MaterialVertexInput bufferInput = vertexInputs[vbSlot];
+                VertexInputDescription bufferInput = vertexInputs[vbSlot];
                 int numElements = bufferInput.Elements.Length;
                 int currentOffset = 0;
                 for (int i = 0; i < numElements; i++)
@@ -38,7 +36,7 @@ namespace Veldrid.Graphics.Direct3D
                         ConvertGenericFormat(genericElement.ElementFormat),
                         currentOffset,
                         vbSlot,
-                        D3DFormats.ConvertInputClass(genericElement.StorageClassifier),
+                        D3DFormats.VeldridToD3DVertexElementInputClass(genericElement.StorageClassifier),
                         genericElement.InstanceStepRate);
                     currentOffset += genericElement.SizeInBytes;
                     element += 1;
@@ -47,7 +45,6 @@ namespace Veldrid.Graphics.Direct3D
 
             return new InputLayout(device, shaderBytecode, elements);
         }
-
 
         private static string GetSemanticName(VertexSemanticType semanticType)
         {
@@ -85,11 +82,6 @@ namespace Veldrid.Graphics.Direct3D
                 default:
                     throw Illegal.Value<VertexElementFormat>();
             }
-        }
-
-        public void Dispose()
-        {
-            DeviceLayout.Dispose();
         }
 
         private class SemanticIndices

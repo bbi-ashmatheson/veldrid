@@ -3,9 +3,9 @@ using SharpDX.Direct3D11;
 using SharpDX.DXGI;
 using SharpDX.Mathematics.Interop;
 using Veldrid.Platform;
-using System.Drawing;
 using System.Numerics;
 using System.Diagnostics;
+using System.Collections.Generic;
 
 namespace Veldrid.Graphics.Direct3D
 {
@@ -18,16 +18,23 @@ namespace Veldrid.Graphics.Direct3D
         private SwapChain _swapChain;
         private DeviceContext _deviceContext;
         private D3DFramebuffer _defaultFramebuffer;
-        private SamplerState _regularSamplerState;
-        private SamplerState _shadowMapSampler;
         private PrimitiveTopology _primitiveTopology;
         private int _syncInterval;
+
+        private readonly Dictionary<D3DVertexInputLayout, InputLayout> _inputLayoutCache = new Dictionary<D3DVertexInputLayout, InputLayout>();
+        private bool _vertexLayoutChanged;
+
+        // Shader constant bindings
+        private D3DConstantBuffer[] _vertexConstantBindings = new D3DConstantBuffer[15];
+        private D3DConstantBuffer[] _geometryConstantBindings = new D3DConstantBuffer[15];
+        private D3DConstantBuffer[] _fragmentConstantBindings = new D3DConstantBuffer[15];
 
         // Texture binding arrays
         private ShaderTextureBinding[] _vertexTextureBindings = new ShaderTextureBinding[MaxShaderResourceViewBindings];
         private ShaderTextureBinding[] _geometryShaderTextureBindings = new ShaderTextureBinding[MaxShaderResourceViewBindings];
         private ShaderTextureBinding[] _pixelShaderTextureBindings = new ShaderTextureBinding[MaxShaderResourceViewBindings];
 
+        private D3DVertexInputLayout _inputLayout;
         private D3DVertexShader _vertexShader;
         private D3DGeometryShader _geometryShader;
         private D3DFragmentShader _fragmentShader;
@@ -42,28 +49,24 @@ namespace Veldrid.Graphics.Direct3D
         public D3DRenderContext(Window window) : this(window, DefaultDeviceFlags) { }
 
         public D3DRenderContext(Window window, DeviceCreationFlags flags)
-            : base(window)
         {
-            CreateAndInitializeDevice(flags);
-            CreateAndSetSamplers();
+            CreateAndInitializeDevice(window, flags);
             ResourceFactory = new D3DResourceFactory(_device);
             RenderCapabilities = new RenderCapabilities(false, false);
             PostContextCreated();
         }
 
         public D3DRenderContext(Window window, SharpDX.Direct3D11.Device existingDevice, SwapChain existingSwapchain)
-            : base(window)
         {
             _swapChain = existingSwapchain;
             _device = existingDevice;
             _deviceContext = _device.ImmediateContext;
             _syncInterval = 1;
 
-            OnWindowResized();
+            OnWindowResized(window.Width, window.Height);
             SetFramebuffer(_defaultFramebuffer);
             _deviceContext.InputAssembler.PrimitiveTopology = SharpDX.Direct3D.PrimitiveTopology.TriangleList;
 
-            CreateAndSetSamplers();
             ResourceFactory = new D3DResourceFactory(_device);
             PostContextCreated();
         }
@@ -71,6 +74,8 @@ namespace Veldrid.Graphics.Direct3D
         public override ResourceFactory ResourceFactory { get; }
 
         public SharpDX.Direct3D11.Device Device => _device;
+
+        protected override GraphicsBackend PlatformGetGraphicsBackend() => GraphicsBackend.Direct3D11;
 
         protected unsafe override void PlatformClearBuffer()
         {
@@ -92,18 +97,46 @@ namespace Veldrid.Graphics.Direct3D
         public override void DrawIndexedPrimitives(int count, int startingIndex) => DrawIndexedPrimitives(count, startingIndex, 0);
         public override void DrawIndexedPrimitives(int count, int startingIndex, int startingVertex)
         {
+            PreDrawCommand();
             _deviceContext.DrawIndexed(count, startingIndex, startingVertex);
         }
 
 
         public override void DrawInstancedPrimitives(int indexCount, int instanceCount, int startingIndex)
         {
+            PreDrawCommand();
             DrawInstancedPrimitives(indexCount, instanceCount, startingIndex, 0);
         }
 
         public override void DrawInstancedPrimitives(int indexCount, int instanceCount, int startingIndex, int startingVertex)
         {
+            PreDrawCommand();
             _deviceContext.DrawIndexedInstanced(indexCount, instanceCount, startingIndex, startingVertex, 0);
+        }
+
+        private void PreDrawCommand()
+        {
+            if (_vertexLayoutChanged)
+            {
+                _vertexLayoutChanged = false;
+                InputLayout inputLayout = GetInputLayout(_vertexShader, _inputLayout);
+                _deviceContext.InputAssembler.InputLayout = inputLayout;
+            }
+        }
+
+        // This method is necessary so we can avoid requiring a VertexShader to be passed to
+        // D3DResourceFactory.CreateInputLayout. Input layouts can be shared between different
+        // vertex shaders, although they do require vertex shader bytecode (from any shader with a
+        // compatible input layout) for their initial creation.
+        private InputLayout GetInputLayout(D3DVertexShader vertexShader, D3DVertexInputLayout d3dInputLayout)
+        {
+            if (!_inputLayoutCache.TryGetValue(d3dInputLayout, out InputLayout inputLayout))
+            {
+                inputLayout = D3DVertexInputLayout.CreateLayout(_device, d3dInputLayout.InputDescriptions, vertexShader.Bytecode);
+                _inputLayoutCache.Add(d3dInputLayout, inputLayout);
+            }
+
+            return inputLayout;
         }
 
         protected override void PlatformSwapBuffers()
@@ -111,14 +144,14 @@ namespace Veldrid.Graphics.Direct3D
             _swapChain.Present(_syncInterval, PresentFlags.None);
         }
 
-        private void CreateAndInitializeDevice(DeviceCreationFlags creationFlags)
+        private void CreateAndInitializeDevice(Window window, DeviceCreationFlags creationFlags)
         {
             var swapChainDescription = new SwapChainDescription()
             {
                 BufferCount = 1,
                 IsWindowed = true,
-                ModeDescription = new ModeDescription(Window.Width, Window.Height, new Rational(60, 1), Format.R8G8B8A8_UNorm),
-                OutputHandle = Window.Handle,
+                ModeDescription = new ModeDescription(window.Width, window.Height, new Rational(60, 1), Format.R8G8B8A8_UNorm),
+                OutputHandle = window.Handle,
                 SampleDescription = new SampleDescription(1, 0),
                 SwapEffect = SwapEffect.Discard,
                 Usage = Usage.RenderTargetOutput
@@ -133,31 +166,13 @@ namespace Veldrid.Graphics.Direct3D
 
             _deviceContext = _device.ImmediateContext;
             var factory = _swapChain.GetParent<Factory>();
-            factory.MakeWindowAssociation(Window.Handle, WindowAssociationFlags.IgnoreAll);
+            factory.MakeWindowAssociation(window.Handle, WindowAssociationFlags.IgnoreAll);
 
-            OnWindowResized();
+            OnWindowResized(window.Width, window.Height);
             SetFramebuffer(_defaultFramebuffer);
             _deviceContext.InputAssembler.PrimitiveTopology = SharpDX.Direct3D.PrimitiveTopology.TriangleList;
             _syncInterval = 0;
         }
-
-        private void CreateAndSetSamplers()
-        {
-            SamplerStateDescription regularDesc = SamplerStateDescription.Default();
-            regularDesc.AddressU = TextureAddressMode.Wrap;
-            regularDesc.AddressV = TextureAddressMode.Wrap;
-            _regularSamplerState = new SamplerState(_device, regularDesc);
-            _deviceContext.PixelShader.SetSampler(0, _regularSamplerState);
-
-            SamplerStateDescription shadowSamplerDesc = SamplerStateDescription.Default();
-            shadowSamplerDesc.Filter = Filter.MinMagMipPoint;
-            shadowSamplerDesc.BorderColor = new RawColor4(1f, 1f, 1f, 1f);
-            shadowSamplerDesc.AddressU = TextureAddressMode.Border;
-            shadowSamplerDesc.AddressV = TextureAddressMode.Border;
-            _shadowMapSampler = new SamplerState(_device, shadowSamplerDesc);
-            _deviceContext.PixelShader.SetSampler(1, _shadowMapSampler);
-        }
-
 
         protected override void PlatformSetViewport(int left, int top, int width, int height)
         {
@@ -169,24 +184,24 @@ namespace Veldrid.Graphics.Direct3D
             if (_primitiveTopology != primitiveTopology)
             {
                 _primitiveTopology = primitiveTopology;
-                var d3dTopology = D3DFormats.ConvertPrimitiveTopology(primitiveTopology);
+                var d3dTopology = D3DFormats.VeldridToD3DPrimitiveTopology(primitiveTopology);
                 _deviceContext.InputAssembler.PrimitiveTopology = d3dTopology;
             }
         }
 
-        protected override void PlatformResize()
+        protected override void PlatformResize(int width, int height)
         {
-            RecreateDefaultFramebuffer();
+            RecreateDefaultFramebuffer(width, height);
         }
 
-        private void RecreateDefaultFramebuffer()
+        private void RecreateDefaultFramebuffer(int width, int height)
         {
             if (_defaultFramebuffer != null)
             {
                 _defaultFramebuffer.Dispose();
             }
 
-            _swapChain.ResizeBuffers(2, Window.Width, Window.Height, Format.B8G8R8A8_UNorm, SwapChainFlags.None);
+            _swapChain.ResizeBuffers(2, width, height, Format.B8G8R8A8_UNorm, SwapChainFlags.None);
 
             // Get the backbuffer from the swapchain
             using (var backBufferTexture = _swapChain.GetBackBuffer<Texture2D>(0))
@@ -243,11 +258,19 @@ namespace Veldrid.Graphics.Direct3D
         {
             D3DShaderSet d3dShaders = ((D3DShaderSet)shaderSet);
 
-            // TODO: Cache these values and do not always set.
-            _deviceContext.InputAssembler.InputLayout = d3dShaders.InputLayout.DeviceLayout;
+            SetInputLayout(d3dShaders.InputLayout);
             SetVertexShader(d3dShaders.VertexShader);
             SetGeometryShader(d3dShaders.GeometryShader);
             SetPixelShader(d3dShaders.FragmentShader);
+        }
+
+        private void SetInputLayout(D3DVertexInputLayout inputLayout)
+        {
+            if (_inputLayout != inputLayout)
+            {
+                _inputLayout = inputLayout;
+                _vertexLayoutChanged = true;
+            }
         }
 
         private void SetVertexShader(D3DVertexShader vertexShader)
@@ -277,29 +300,74 @@ namespace Veldrid.Graphics.Direct3D
             }
         }
 
-        protected override void PlatformSetShaderConstantBindings(ShaderConstantBindings shaderConstantBindings)
+        protected override void PlatformSetShaderResourceBindingSlots(ShaderResourceBindingSlots shaderConstantBindings)
         {
-            shaderConstantBindings.Apply();
         }
 
-        protected override void PlatformSetShaderTextureBindingSlots(ShaderTextureBindingSlots bindingSlots)
+        protected override void PlatformSetConstantBuffer(int slot, ConstantBuffer cb)
         {
+            D3DResourceBindingSlotInfo slotInfo = ShaderResourceBindingSlots.GetConstantBufferInfo(slot);
+            ShaderStages applicability = slotInfo.Stages;
+
+            if ((applicability & ShaderStages.Vertex) == ShaderStages.Vertex
+                && _vertexConstantBindings[slot] != cb)
+            {
+                _deviceContext.VertexShader.SetConstantBuffer(slot, ((D3DConstantBuffer)cb).Buffer);
+                _vertexConstantBindings[slot] = (D3DConstantBuffer)cb;
+            }
+
+            if ((applicability & ShaderStages.Geometry) == ShaderStages.Geometry
+                && _geometryConstantBindings[slot] != cb)
+            {
+                _deviceContext.GeometryShader.SetConstantBuffer(slot, ((D3DConstantBuffer)cb).Buffer);
+                _geometryConstantBindings[slot] = (D3DConstantBuffer)cb;
+            }
+
+            if ((applicability & ShaderStages.Fragment) == ShaderStages.Fragment
+                && _fragmentConstantBindings[slot] != cb)
+            {
+                _deviceContext.PixelShader.SetConstantBuffer(slot, ((D3DConstantBuffer)cb).Buffer);
+                _fragmentConstantBindings[slot] = (D3DConstantBuffer)cb;
+            }
         }
 
         protected override void PlatformSetTexture(int slot, ShaderTextureBinding binding)
         {
-            ShaderStageApplicabilityFlags applicability = ShaderTextureBindingSlots.GetApplicabilityForSlot(slot);
-            if ((applicability & ShaderStageApplicabilityFlags.Vertex) == ShaderStageApplicabilityFlags.Vertex)
+            D3DResourceBindingSlotInfo slotInfo = ShaderResourceBindingSlots.GetTextureSlotInfo(slot);
+            ShaderStages applicability = slotInfo.Stages;
+            if ((applicability & ShaderStages.Vertex) == ShaderStages.Vertex)
             {
-                SetTextureBinding(ShaderType.Vertex, slot, binding);
+                SetTextureBinding(ShaderStages.Vertex, slotInfo.DeviceSlot, binding);
             }
-            if ((applicability & ShaderStageApplicabilityFlags.Geometry) == ShaderStageApplicabilityFlags.Geometry)
+            if ((applicability & ShaderStages.Geometry) == ShaderStages.Geometry)
             {
-                SetTextureBinding(ShaderType.Geometry, slot, binding);
+                SetTextureBinding(ShaderStages.Geometry, slotInfo.DeviceSlot, binding);
             }
-            if ((applicability & ShaderStageApplicabilityFlags.Fragment) == ShaderStageApplicabilityFlags.Fragment)
+            if ((applicability & ShaderStages.Fragment) == ShaderStages.Fragment)
             {
-                SetTextureBinding(ShaderType.Fragment, slot, binding);
+                SetTextureBinding(ShaderStages.Fragment, slotInfo.DeviceSlot, binding);
+            }
+        }
+
+        protected override void PlatformSetSamplerState(int slot, SamplerState samplerState)
+        {
+            D3DSamplerState d3dSamplerState = (D3DSamplerState)samplerState;
+
+            D3DResourceBindingSlotInfo slotInfo = ShaderResourceBindingSlots.GetSamplerSlotInfo(slot);
+            ShaderStages applicability = slotInfo.Stages;
+
+            // TODO: These slots should be tracked and the sets elided if possible.
+            if ((applicability & ShaderStages.Vertex) == ShaderStages.Vertex)
+            {
+                _deviceContext.VertexShader.SetSampler(slotInfo.DeviceSlot, d3dSamplerState.SamplerState);
+            }
+            if ((applicability & ShaderStages.Geometry) == ShaderStages.Geometry)
+            {
+                _deviceContext.GeometryShader.SetSampler(slotInfo.DeviceSlot, d3dSamplerState.SamplerState);
+            }
+            if ((applicability & ShaderStages.Fragment) == ShaderStages.Fragment)
+            {
+                _deviceContext.PixelShader.SetSampler(slotInfo.DeviceSlot, d3dSamplerState.SamplerState);
             }
         }
 
@@ -307,32 +375,38 @@ namespace Veldrid.Graphics.Direct3D
         {
             D3DFramebuffer d3dFramebuffer = (D3DFramebuffer)framebuffer;
             D3DTexture2D depthTexture = d3dFramebuffer.DepthTexture;
-            UnbindIfBound(ShaderType.Vertex, depthTexture);
-            UnbindIfBound(ShaderType.Geometry, depthTexture);
-            UnbindIfBound(ShaderType.Fragment, depthTexture);
+            UnbindIfBound(ShaderStages.Vertex, depthTexture);
+            UnbindIfBound(ShaderStages.Geometry, depthTexture);
+            UnbindIfBound(ShaderStages.Fragment, depthTexture);
 
             for (int i = 0; i < MaxRenderTargets; i++)
             {
                 DeviceTexture2D colorTexture = framebuffer.GetColorTexture(i);
                 if (colorTexture != null)
                 {
-                    UnbindIfBound(ShaderType.Vertex, colorTexture);
-                    UnbindIfBound(ShaderType.Geometry, colorTexture);
-                    UnbindIfBound(ShaderType.Fragment, colorTexture);
+                    UnbindIfBound(ShaderStages.Vertex, colorTexture);
+                    UnbindIfBound(ShaderStages.Geometry, colorTexture);
+                    UnbindIfBound(ShaderStages.Fragment, colorTexture);
                 }
             }
             d3dFramebuffer.Apply();
         }
 
-        private void UnbindIfBound(ShaderType type, DeviceTexture texture)
+        /// <summary>
+        /// Unbinds a texture if it is bound to any slots for the given shader type.
+        /// Used to avoid binding a texture to a framebuffer while it is in use elsewhere, which is not valid.
+        /// </summary>
+        /// <param name="shaderType">The type of shader to unbind the texture from.</param>
+        /// <param name="texture">The texture resource to unbind.</param>
+        private void UnbindIfBound(ShaderStages shaderType, DeviceTexture texture)
         {
-            ShaderTextureBinding[] bindingsArray = GetTextureBindingsArray(type);
+            ShaderTextureBinding[] bindingsArray = GetTextureBindingsArray(shaderType);
             for (int i = 0; i < bindingsArray.Length; i++)
             {
                 if (bindingsArray[i] != null && bindingsArray[i].BoundTexture == texture)
                 {
                     bindingsArray[i] = null;
-                    CommonShaderStage stage = GetShaderStage(type);
+                    CommonShaderStage stage = GetShaderStage(shaderType);
                     stage.SetShaderResource(i, null);
                 }
             }
@@ -353,7 +427,7 @@ namespace Veldrid.Graphics.Direct3D
             ((D3DRasterizerState)rasterizerState).Apply();
         }
 
-        private void SetTextureBinding(ShaderType type, int slot, ShaderTextureBinding binding)
+        private void SetTextureBinding(ShaderStages type, int slot, ShaderTextureBinding binding)
         {
             Debug.Assert(slot >= 0 && slot < MaxShaderResourceViewBindings);
 
@@ -367,33 +441,33 @@ namespace Veldrid.Graphics.Direct3D
             }
         }
 
-        private ShaderTextureBinding[] GetTextureBindingsArray(ShaderType type)
+        private ShaderTextureBinding[] GetTextureBindingsArray(ShaderStages type)
         {
             switch (type)
             {
-                case ShaderType.Vertex:
+                case ShaderStages.Vertex:
                     return _vertexTextureBindings;
-                case ShaderType.Geometry:
+                case ShaderStages.Geometry:
                     return _geometryShaderTextureBindings;
-                case ShaderType.Fragment:
+                case ShaderStages.Fragment:
                     return _pixelShaderTextureBindings;
                 default:
-                    throw Illegal.Value<ShaderType>();
+                    throw Illegal.Value<ShaderStages>();
             }
         }
 
-        private CommonShaderStage GetShaderStage(ShaderType type)
+        private CommonShaderStage GetShaderStage(ShaderStages type)
         {
             switch (type)
             {
-                case ShaderType.Vertex:
+                case ShaderStages.Vertex:
                     return _deviceContext.VertexShader;
-                case ShaderType.Geometry:
+                case ShaderStages.Geometry:
                     return _deviceContext.GeometryShader;
-                case ShaderType.Fragment:
+                case ShaderStages.Fragment:
                     return _deviceContext.PixelShader;
                 default:
-                    throw Illegal.Value<ShaderType>();
+                    throw Illegal.Value<ShaderStages>();
             }
         }
 
@@ -421,7 +495,6 @@ namespace Veldrid.Graphics.Direct3D
         }
 
         private new D3DFramebuffer CurrentFramebuffer => (D3DFramebuffer)base.CurrentFramebuffer;
-
-        private new D3DShaderTextureBindingSlots ShaderTextureBindingSlots => (D3DShaderTextureBindingSlots)base.ShaderTextureBindingSlots;
+        private new D3DShaderResourceBindingSlots ShaderResourceBindingSlots => (D3DShaderResourceBindingSlots)base.ShaderResourceBindingSlots;
     }
 }

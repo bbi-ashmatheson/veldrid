@@ -1,13 +1,12 @@
 ﻿using OpenTK.Graphics.OpenGL;
 using System;
-using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace Veldrid.Graphics.OpenGL
 {
-    public class OpenGLUniformStorageAdapter : ConstantBuffer
+    public class OpenGLUniformStorageAdapter
     {
         private readonly int _programID;
         private readonly int _uniformLocation;
@@ -25,42 +24,17 @@ namespace Veldrid.Graphics.OpenGL
             _setterFunction = GetSetterFunction(_uniformType);
         }
 
-        public unsafe void GetData(IntPtr storageLocation, int storageSizeInBytes)
-        {
-            if (storageSizeInBytes % sizeof(float) != 0)
-            {
-                throw new InvalidOperationException("Storage size must be a multiple of 4 bytes.");
-            }
-
-            float* floatPtr = (float*)storageLocation.ToPointer();
-            GL.GetUniform(_programID, _uniformLocation, floatPtr);
-        }
-
-        public void GetData<T>(ref T storageLocation, int storageSizeInBytes) where T : struct
-        {
-            GCHandle handle = GCHandle.Alloc(storageLocation, GCHandleType.Pinned);
-            GetData(handle.AddrOfPinnedObject(), storageSizeInBytes);
-            handle.Free();
-        }
-
-        public void GetData<T>(T[] storageLocation, int storageSizeInBytes) where T : struct
-        {
-            GCHandle handle = GCHandle.Alloc(storageLocation, GCHandleType.Pinned);
-            GetData(handle.AddrOfPinnedObject(), storageSizeInBytes);
-            handle.Free();
-        }
-
         public void SetData(IntPtr data, int dataSizeInBytes)
             => SetData(data, dataSizeInBytes, 0);
         public unsafe void SetData(IntPtr data, int dataSizeInBytes, int destinationOffsetInBytes)
         {
             if (dataSizeInBytes % sizeof(float) != 0)
             {
-                throw new InvalidOperationException($"{nameof(dataSizeInBytes)} must be a multiple of 4 bytes");
+                throw new VeldridException($"{nameof(dataSizeInBytes)} must be a multiple of 4 bytes");
             }
             if (destinationOffsetInBytes % sizeof(float) != 0)
             {
-                throw new InvalidOperationException($"{nameof(destinationOffsetInBytes)} must be a multiple of 4 bytes");
+                throw new VeldridException($"{nameof(destinationOffsetInBytes)} must be a multiple of 4 bytes");
             }
 
             _setterFunction(_uniformLocation, data, dataSizeInBytes, destinationOffsetInBytes);
@@ -157,5 +131,7 @@ namespace Veldrid.Graphics.OpenGL
         {
             throw new NotSupportedException();
         }
+
+        public void Dispose() { }
     }
 }

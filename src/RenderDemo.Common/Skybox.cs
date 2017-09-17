@@ -1,3 +1,4 @@
+using ImageSharp;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -8,6 +9,7 @@ namespace Veldrid.RenderDemo
 {
     public class Skybox : SwappableRenderItem
     {
+        private DependantDataProvider<Matrix4x4> _viewProvider;
         private readonly ImageSharpTexture _front;
         private readonly ImageSharpTexture _back;
         private readonly ImageSharpTexture _left;
@@ -19,9 +21,9 @@ namespace Veldrid.RenderDemo
         private VertexBuffer _vb;
         private IndexBuffer _ib;
         private Material _material;
+        private ConstantBuffer _viewMatrixBuffer;
         private ShaderTextureBinding _cubemapBinding;
         private RasterizerState _rasterizerState;
-        private ConstantBufferDataProvider _perObjectInput;
 
         public Skybox(RenderContext rc, AssetDatabase ad) : this(rc, ad,
             ad.LoadAsset<ImageSharpTexture>("Textures/cloudtop/cloudtop_ft.png"),
@@ -45,7 +47,7 @@ namespace Veldrid.RenderDemo
             ChangeRenderContext(ad, rc);
         }
 
-        public void ChangeRenderContext(AssetDatabase ad, RenderContext rc)
+        public unsafe void ChangeRenderContext(AssetDatabase ad, RenderContext rc)
         {
             var factory = rc.ResourceFactory;
 
@@ -53,29 +55,39 @@ namespace Veldrid.RenderDemo
             _vb.SetVertexData(s_vertices, new VertexDescriptor(VertexPosition.SizeInBytes, 1, 0, IntPtr.Zero));
 
             _ib = factory.CreateIndexBuffer(s_indices.Length * sizeof(int), false);
-            _ib.SetIndices(s_indices, IndexFormat.UInt16);
+            _ib.SetIndices(s_indices);
 
-            _material = ad.LoadAsset<MaterialAsset>("MaterialAsset/Skybox.json").Create(ad, rc);
+            Shader vs = factory.CreateShader(ShaderStages.Vertex, ShaderHelper.LoadShaderCode("skybox-vertex", ShaderStages.Vertex, rc.ResourceFactory));
+            Shader fs = factory.CreateShader(ShaderStages.Fragment, ShaderHelper.LoadShaderCode("skybox-frag", ShaderStages.Fragment, rc.ResourceFactory));
+            VertexInputLayout inputLayout = factory.CreateInputLayout(
+                new VertexInputDescription(
+                    12,
+                    new VertexInputElement("in_position", VertexSemanticType.Position, VertexElementFormat.Float3)));
+            ShaderSet shaderSet = factory.CreateShaderSet(inputLayout, vs, fs);
+            ShaderResourceBindingSlots constantSlots = factory.CreateShaderResourceBindingSlots(
+                shaderSet,
+                new ShaderResourceDescription("ProjectionMatrixBuffer", ShaderConstantType.Matrix4x4),
+                new ShaderResourceDescription("ViewMatrixBuffer", ShaderConstantType.Matrix4x4),
+                new ShaderResourceDescription("Skybox", ShaderResourceType.Texture),
+                new ShaderResourceDescription("Skybox", ShaderResourceType.Sampler));
 
-            var viewProvider = (ConstantBufferDataProvider<Matrix4x4>)((ChangeableProvider)rc.GetNamedGlobalBufferProviderPair("ViewMatrix").DataProvider).DataProvider;
-            _perObjectInput = new DependantDataProvider<Matrix4x4>(
-                viewProvider,
-                Utilities.ConvertToMatrix3x3);
+            _material = new Material(shaderSet, constantSlots);
+            _viewMatrixBuffer = factory.CreateConstantBuffer(ShaderConstantType.Matrix4x4);
 
-            using (var frontPin = _front.Pixels.Pin())
-            using (var backPin = _back.Pixels.Pin())
-            using (var leftPin = _left.Pixels.Pin())
-            using (var rightPin = _right.Pixels.Pin())
-            using (var topPin = _top.Pixels.Pin())
-            using (var bottomPin = _bottom.Pixels.Pin())
+            fixed (Rgba32* frontPin = &_front.Pixels.DangerousGetPinnableReference())
+            fixed (Rgba32* backPin = &_back.Pixels.DangerousGetPinnableReference())
+            fixed (Rgba32* leftPin = &_left.Pixels.DangerousGetPinnableReference())
+            fixed (Rgba32* rightPin = &_right.Pixels.DangerousGetPinnableReference())
+            fixed (Rgba32* topPin = &_top.Pixels.DangerousGetPinnableReference())
+            fixed (Rgba32* bottomPin = &_bottom.Pixels.DangerousGetPinnableReference())
             {
                 var cubemapTexture = factory.CreateCubemapTexture(
-                    frontPin.Ptr,
-                    backPin.Ptr,
-                    leftPin.Ptr,
-                    rightPin.Ptr,
-                    topPin.Ptr,
-                    bottomPin.Ptr,
+                    (IntPtr)frontPin,
+                    (IntPtr)backPin,
+                    (IntPtr)leftPin,
+                    (IntPtr)rightPin,
+                    (IntPtr)topPin,
+                    (IntPtr)bottomPin,
                     _front.Width,
                     _front.Height,
                     _front.PixelSizeInBytes,
@@ -84,6 +96,8 @@ namespace Veldrid.RenderDemo
             }
 
             _rasterizerState = factory.CreateRasterizerState(FaceCullingMode.None, TriangleFillMode.Solid, false, false);
+
+            _viewProvider = new DependantDataProvider<Matrix4x4>(SharedDataProviders.GetProvider<Matrix4x4>("ViewMatrix"), Utilities.ConvertToMatrix3x3);
         }
 
         public RenderOrderKey GetRenderOrderKey(Vector3 viewPosition)
@@ -96,13 +110,15 @@ namespace Veldrid.RenderDemo
 
         public void Render(RenderContext rc, string pipelineStage)
         {
-            rc.SetVertexBuffer(_vb);
-            rc.SetIndexBuffer(_ib);
-            rc.SetMaterial(_material);
+            rc.VertexBuffer = _vb;
+            rc.IndexBuffer = _ib;
+            _material.Apply(rc);
+            rc.SetConstantBuffer(0, SharedDataProviders.ProjectionMatrixBuffer);
+            _viewProvider.SetData(_viewMatrixBuffer);
+            rc.SetConstantBuffer(1, _viewMatrixBuffer);
             RasterizerState previousRasterState = rc.RasterizerState;
             rc.SetRasterizerState(_rasterizerState);
-            _material.UseTexture(0, _cubemapBinding);
-            _material.ApplyPerObjectInput(_perObjectInput);
+            rc.SetTexture(2, _cubemapBinding);
             rc.DrawIndexedPrimitives(s_indices.Length, 0);
             rc.SetRasterizerState(previousRasterState);
         }

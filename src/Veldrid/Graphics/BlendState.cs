@@ -41,37 +41,6 @@ namespace Veldrid.Graphics
         /// <summary>
         /// The blend factor used with parameterized blend states.
         /// </summary>
-        RgbaFloat BlendFactor { get; set; }
-    }
-
-    /// <summary>
-    /// A blend factor which controls blending behavior.
-    /// </summary>
-    public enum Blend
-    {
-        Zero,
-        One,
-        SourceAlpha,
-        InverseSourceAlpha,
-        DestinationAlpha,
-        InverseDestinationAlpha,
-        SourceColor,
-        InverseSourceColor,
-        DestinationColor,
-        InverseDestinationColor,
-        BlendFactor,
-        InverseBlendFactor
-    }
-
-    /// <summary>
-    /// The function kind describing blend behavior.
-    /// </summary>
-    public enum BlendFunction
-    {
-        Add,
-        Subtract,
-        ReverseSubtract,
-        Minimum,
-        Maximum
+        RgbaFloat BlendFactor { get; }
     }
 }

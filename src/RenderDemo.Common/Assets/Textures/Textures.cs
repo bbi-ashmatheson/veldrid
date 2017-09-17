@@ -6,8 +6,9 @@ namespace Veldrid.RenderDemo
 {
     public static class Textures
     {
-        public static readonly ImageSharpTexture CubeTexture = new ImageSharpTexture(Path.Combine(AppContext.BaseDirectory, "Assets/Textures/CubeTexture.png"));
-        public static readonly ImageSharpTexture WoodTexture = new ImageSharpTexture(Path.Combine(AppContext.BaseDirectory, "Assets/Textures/Wood.png"));
+        public static readonly ImageSharpMipmapChain Stone = new ImageSharpMipmapChain(Path.Combine(AppContext.BaseDirectory, "Assets/Textures/CubeTexture.png"));
+        public static readonly ImageSharpMipmapChain Wood = new ImageSharpMipmapChain(Path.Combine(AppContext.BaseDirectory, "Assets/Textures/Wood.png"));
+        public static readonly ImageSharpMipmapChain Crate = new ImageSharpMipmapChain(Path.Combine(AppContext.BaseDirectory, "Assets/Textures/crate0_diffuse.png"));
         public static readonly TextureData PureWhiteTexture = LoadWhiteTextureData();
 
         private static TextureData LoadWhiteTextureData()

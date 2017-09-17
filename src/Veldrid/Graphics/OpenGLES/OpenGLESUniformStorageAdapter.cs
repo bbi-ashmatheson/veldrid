@@ -29,7 +29,7 @@ namespace Veldrid.Graphics.OpenGLES
         {
             if (storageSizeInBytes % sizeof(float) != 0)
             {
-                throw new InvalidOperationException("Storage size must be a multiple of 4 bytes.");
+                throw new VeldridException("Storage size must be a multiple of 4 bytes.");
             }
 
             float* floatPtr = (float*)storageLocation.ToPointer();
@@ -57,11 +57,11 @@ namespace Veldrid.Graphics.OpenGLES
         {
             if (dataSizeInBytes % sizeof(float) != 0)
             {
-                throw new InvalidOperationException($"{nameof(dataSizeInBytes)} must be a multiple of 4 bytes");
+                throw new VeldridException($"{nameof(dataSizeInBytes)} must be a multiple of 4 bytes");
             }
             if (destinationOffsetInBytes % sizeof(float) != 0)
             {
-                throw new InvalidOperationException($"{nameof(destinationOffsetInBytes)} must be a multiple of 4 bytes");
+                throw new VeldridException($"{nameof(destinationOffsetInBytes)} must be a multiple of 4 bytes");
             }
 
             _setterFunction(_uniformLocation, data, dataSizeInBytes, destinationOffsetInBytes);
@@ -162,6 +162,38 @@ namespace Veldrid.Graphics.OpenGLES
         public void UnmapBuffer()
         {
             throw new NotSupportedException();
+        }
+
+        public void Dispose() { }
+
+        public void SetData<T>(T[] data) where T : struct
+        {
+            throw new NotImplementedException();
+        }
+
+        public void SetData<T>(ArraySegment<T> data, int destinationOffsetInBytes) where T : struct
+        {
+            throw new NotImplementedException();
+        }
+
+        public void GetData<T>(T[] storageLocation) where T : struct
+        {
+            throw new NotImplementedException();
+        }
+
+        public void SetData<T>(ref T data) where T : struct
+        {
+            SetData(ref data, Unsafe.SizeOf<T>());
+        }
+
+        public void SetData<T>(T data) where T : struct
+        {
+            SetData(ref data);
+        }
+
+        public void SetData<T>(T data, int destinationOffsetInBytes) where T : struct
+        {
+            SetData(ref data, Unsafe.SizeOf<T>(), destinationOffsetInBytes);
         }
     }
 }

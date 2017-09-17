@@ -13,42 +13,138 @@ namespace Veldrid.Graphics.OpenGL
                     return OpenTK.Graphics.OpenGL.PixelFormat.Rgba;
                 case PixelFormat.R8_UInt:
                     return OpenTK.Graphics.OpenGL.PixelFormat.RedInteger;
-                case PixelFormat.Alpha_UInt8:
-                    return OpenTK.Graphics.OpenGL.PixelFormat.Alpha;
-                case PixelFormat.R8_G8_B8_A8:
+                case PixelFormat.R16_UInt:
+                    return OpenTK.Graphics.OpenGL.PixelFormat.RedInteger;
+                case PixelFormat.R8_G8_B8_A8_UInt:
                     return OpenTK.Graphics.OpenGL.PixelFormat.Rgba;
-                case PixelFormat.Alpha_UInt16:
-                    return OpenTK.Graphics.OpenGL.PixelFormat.Alpha;
+                case PixelFormat.B8_G8_R8_A8_UInt:
+                    return OpenTK.Graphics.OpenGL.PixelFormat.Bgra;
                 default:
                     throw Illegal.Value<PixelFormat>();
             }
         }
 
-        public static OpenTK.Graphics.OpenGL.ShaderType VeldridToGLShaderType(ShaderType type)
+        public static ShaderType VeldridToGLShaderType(ShaderStages type)
         {
             switch (type)
             {
-                case ShaderType.Vertex:
-                    return OpenTK.Graphics.OpenGL.ShaderType.VertexShader;
-                case ShaderType.Geometry:
-                    return OpenTK.Graphics.OpenGL.ShaderType.GeometryShader;
-                case ShaderType.Fragment:
-                    return OpenTK.Graphics.OpenGL.ShaderType.FragmentShader;
+                case ShaderStages.Vertex:
+                    return ShaderType.VertexShader;
+                case ShaderStages.TessellationControl:
+                    return ShaderType.TessControlShader;
+                case ShaderStages.TessellationEvaluation:
+                    return ShaderType.TessEvaluationShader;
+                case ShaderStages.Geometry:
+                    return ShaderType.GeometryShader;
+                case ShaderStages.Fragment:
+                    return ShaderType.FragmentShader;
                 default:
-                    throw Illegal.Value<ShaderType>();
+                    throw Illegal.Value<ShaderStages>();
             }
         }
 
-        public static ShaderType GLToVeldridShaderType(OpenTK.Graphics.OpenGL.ShaderType type)
+        internal static TextureWrapMode VeldridToGLTextureWrapMode(SamplerAddressMode mode)
+        {
+            switch (mode)
+            {
+                case SamplerAddressMode.Wrap:
+                    return TextureWrapMode.Repeat;
+                case SamplerAddressMode.Mirror:
+                    return TextureWrapMode.MirroredRepeat;
+                case SamplerAddressMode.Clamp:
+                    return TextureWrapMode.Clamp;
+                case SamplerAddressMode.Border:
+                    return TextureWrapMode.ClampToBorder;
+                default:
+                    throw Illegal.Value<SamplerAddressMode>();
+            }
+        }
+
+        internal static SizedInternalFormat GetSizedInternalFormat(PixelFormat pixelFormat)
+        {
+            switch (pixelFormat)
+            {
+                case PixelFormat.R32_G32_B32_A32_Float:
+                    return SizedInternalFormat.Rgba32f;
+                case PixelFormat.R8_UInt:
+                    return SizedInternalFormat.R8ui;
+                case PixelFormat.R16_UInt:
+                    return SizedInternalFormat.R16ui;
+                case PixelFormat.R8_G8_B8_A8_UInt:
+                    return SizedInternalFormat.Rgba8ui;
+                case PixelFormat.B8_G8_R8_A8_UInt:
+                    return SizedInternalFormat.Rgba8ui;
+                default:
+                    throw Illegal.Value<PixelFormat>();
+            }
+        }
+
+
+        internal static void VeldridToGLTextureMinMagFilter(SamplerFilter filter, bool mip, out TextureMinFilter min, out TextureMagFilter mag)
+        {
+            switch (filter)
+            {
+                case SamplerFilter.MinMagMipPoint:
+                case SamplerFilter.ComparisonMinMagMipPoint:
+                    min = mip ? TextureMinFilter.NearestMipmapNearest : TextureMinFilter.Nearest;
+                    mag = TextureMagFilter.Nearest;
+                    break;
+                case SamplerFilter.MinMagPointMipLinear:
+                case SamplerFilter.ComparisonMinMagPointMipLinear:
+                    min = mip ? TextureMinFilter.NearestMipmapLinear : TextureMinFilter.Nearest;
+                    mag = TextureMagFilter.Nearest;
+                    break;
+                case SamplerFilter.MinPointMagLinearMipPoint:
+                case SamplerFilter.ComparisonMinPointMagLinearMipPoint:
+                    min = mip ? TextureMinFilter.NearestMipmapNearest : TextureMinFilter.Nearest;
+                    mag = TextureMagFilter.Linear;
+                    break;
+                case SamplerFilter.MinPointMagMipLinear:
+                case SamplerFilter.ComparisonMinPointMagMipLinear:
+                    min = mip ? TextureMinFilter.NearestMipmapLinear : TextureMinFilter.Nearest;
+                    mag = TextureMagFilter.Linear;
+                    break;
+                case SamplerFilter.MinLinearMagMipPoint:
+                case SamplerFilter.ComparisonMinLinearMagMipPoint:
+                    min = mip ? TextureMinFilter.LinearMipmapNearest : TextureMinFilter.Linear;
+                    mag = TextureMagFilter.Nearest;
+                    break;
+                case SamplerFilter.MinLinearMagPointMipLinear:
+                case SamplerFilter.ComparisonMinLinearMagPointMipLinear:
+                    min = mip ? TextureMinFilter.LinearMipmapLinear : TextureMinFilter.Linear;
+                    mag = TextureMagFilter.Nearest;
+                    break;
+                case SamplerFilter.MinMagLinearMipPoint:
+                case SamplerFilter.ComparisonMinMagLinearMipPoint:
+                    min = mip ? TextureMinFilter.LinearMipmapNearest : TextureMinFilter.Linear;
+                    mag = TextureMagFilter.Linear;
+                    break;
+                case SamplerFilter.MinMagMipLinear:
+                case SamplerFilter.ComparisonMinMagMipLinear:
+                    min = mip ? TextureMinFilter.LinearMipmapLinear : TextureMinFilter.Linear;
+                    mag = TextureMagFilter.Linear;
+                    break;
+                case SamplerFilter.Anisotropic:
+                case SamplerFilter.ComparisonAnisotropic:
+                    // TODO: This doesn't map to a min/mag filtering mode.
+                    min = TextureMinFilter.Nearest;
+                    mag = TextureMagFilter.Nearest;
+                    break;
+                default:
+                    throw Illegal.Value<SamplerFilter>();
+            }
+        }
+
+        public static ShaderStages GLToVeldridShaderType(OpenTK.Graphics.OpenGL.ShaderType type)
         {
             switch (type)
             {
                 case OpenTK.Graphics.OpenGL.ShaderType.FragmentShader:
-                    return ShaderType.Fragment;
+                    return ShaderStages.Fragment;
                 case OpenTK.Graphics.OpenGL.ShaderType.VertexShader:
-                    return ShaderType.Vertex;
+                    return ShaderStages.Vertex;
                 case OpenTK.Graphics.OpenGL.ShaderType.GeometryShader:
-                    return ShaderType.Geometry;
+                    return ShaderStages.Geometry;
                 case OpenTK.Graphics.OpenGL.ShaderType.TessEvaluationShader:
                 case OpenTK.Graphics.OpenGL.ShaderType.TessControlShader:
                 case OpenTK.Graphics.OpenGL.ShaderType.ComputeShader:
@@ -119,12 +215,11 @@ namespace Veldrid.Graphics.OpenGL
                     return PixelType.Float;
                 case PixelFormat.R8_UInt:
                     return PixelType.UnsignedByte;
-                case PixelFormat.Alpha_UInt8:
-                    return PixelType.UnsignedByte;
-                case PixelFormat.R8_G8_B8_A8:
-                    return PixelType.UnsignedByte;
-                case PixelFormat.Alpha_UInt16:
+                case PixelFormat.R16_UInt:
                     return PixelType.UnsignedShort;
+                case PixelFormat.R8_G8_B8_A8_UInt:
+                case PixelFormat.B8_G8_R8_A8_UInt:
+                    return PixelType.UnsignedByte;
                 default:
                     throw Illegal.Value<PixelFormat>();
             }
@@ -138,12 +233,12 @@ namespace Veldrid.Graphics.OpenGL
                     return PixelInternalFormat.Rgba32f;
                 case PixelFormat.R8_UInt:
                     return PixelInternalFormat.R8ui;
-                case PixelFormat.Alpha_UInt8:
-                    return PixelInternalFormat.Alpha;
-                case PixelFormat.R8_G8_B8_A8:
+                case PixelFormat.R16_UInt:
+                    return PixelInternalFormat.R16ui;
+                case PixelFormat.R8_G8_B8_A8_UInt:
                     return PixelInternalFormat.Rgba;
-                case PixelFormat.Alpha_UInt16:
-                    return PixelInternalFormat.Alpha16;
+                case PixelFormat.B8_G8_R8_A8_UInt:
+                    return PixelInternalFormat.Rgba;
                 default:
                     throw Illegal.Value<PixelFormat>();
             }
@@ -230,8 +325,6 @@ namespace Veldrid.Graphics.OpenGL
                     return DrawElementsType.UnsignedInt;
                 case IndexFormat.UInt16:
                     return DrawElementsType.UnsignedShort;
-                case IndexFormat.UInt8:
-                    return DrawElementsType.UnsignedByte;
                 default:
                     throw Illegal.Value<DrawElementsType>();
             }

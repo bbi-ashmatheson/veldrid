@@ -5,43 +5,13 @@ namespace Veldrid.Graphics.OpenGLES
 {
     public class OpenGLESVertexInputLayout : VertexInputLayout
     {
-        public MaterialVertexInput[] InputDescription { get; }
+        public VertexInputDescription[] InputDescriptions { get; }
         public OpenGLESMaterialVertexInput[] VBLayoutsBySlot { get; }
 
-        public OpenGLESVertexInputLayout(MaterialVertexInput[] vertexInputs)
+        public OpenGLESVertexInputLayout(VertexInputDescription[] vertexInputs)
         {
-            InputDescription = vertexInputs;
+            InputDescriptions = vertexInputs;
             VBLayoutsBySlot = vertexInputs.Select(mvi => new OpenGLESMaterialVertexInput(mvi)).ToArray();
-        }
-
-        public int SetVertexAttributes(int vertexBufferSlot, OpenGLESVertexBuffer vb, int previousAttributesBound)
-        {
-            // TODO: Related to OpenGLESRenderContext.PlatformSetVertexBuffer()
-            // These attributes should be lazily set on a draw call or something.
-            if (vertexBufferSlot <= VBLayoutsBySlot.Length)
-            {
-                return previousAttributesBound;
-            }
-
-            int baseSlot = GetSlotBaseIndex(vertexBufferSlot);
-            OpenGLESMaterialVertexInput input = VBLayoutsBySlot[vertexBufferSlot];
-            vb.Apply();
-            for (int i = 0; i < input.Elements.Length; i++)
-            {
-                OpenGLESMaterialVertexInputElement element = input.Elements[i];
-                int slot = baseSlot + i;
-                GL.EnableVertexAttribArray(slot);
-                Utilities.CheckLastGLES3Error();
-                GL.VertexAttribPointer(slot, element.ElementCount, element.Type, element.Normalized, input.VertexSizeInBytes, element.Offset);
-                Utilities.CheckLastGLES3Error();
-            }
-            for (int extraSlot = input.Elements.Length; extraSlot < previousAttributesBound; extraSlot++)
-            {
-                GL.DisableVertexAttribArray(extraSlot);
-                Utilities.CheckLastGLES3Error();
-            }
-
-            return input.Elements.Length;
         }
 
         public int SetVertexAttributes(VertexBuffer[] vertexBuffers, int previousAttributesBound, int baseVertexOffset)
@@ -103,7 +73,7 @@ namespace Veldrid.Graphics.OpenGLES
             Elements = elements;
         }
 
-        public OpenGLESMaterialVertexInput(MaterialVertexInput genericInput)
+        public OpenGLESMaterialVertexInput(VertexInputDescription genericInput)
         {
             VertexSizeInBytes = genericInput.VertexSizeInBytes;
             Elements = new OpenGLESMaterialVertexInputElement[genericInput.Elements.Length];
@@ -152,10 +122,10 @@ namespace Veldrid.Graphics.OpenGLES
             InstanceStepRate = instanceStepRate;
         }
 
-        public OpenGLESMaterialVertexInputElement(MaterialVertexInputElement genericElement, int offset)
+        public OpenGLESMaterialVertexInputElement(VertexInputElement genericElement, int offset)
         {
             SizeInBytes = genericElement.SizeInBytes;
-            ElementCount = VertexFormatHelpers.GetElementCount(genericElement.ElementFormat);
+            ElementCount = FormatHelpers.GetElementCount(genericElement.ElementFormat);
             Type = GetGenericFormatType(genericElement.ElementFormat);
             Offset = offset;
             Normalized = genericElement.SemanticType == VertexSemanticType.Color && genericElement.ElementFormat == VertexElementFormat.Byte4;

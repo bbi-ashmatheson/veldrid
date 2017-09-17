@@ -17,6 +17,7 @@ using System.Collections.Generic;
 using SharpDX.DXGI;
 using System.Threading.Tasks;
 using Veldrid.Graphics.OpenGLES;
+using Veldrid.Graphics.Vulkan;
 
 namespace Veldrid.RenderDemo
 {
@@ -24,10 +25,11 @@ namespace Veldrid.RenderDemo
     {
         private static Renderer _renderer;
         private static RenderContext _rc;
+        private static Window _window;
         private static ShadowMapStage _shadowMapStage;
         private static RendererOption[] _backendOptions;
         private static FrameTimeAverager _fta;
-        private static double _desiredFrameLengthMilliseconds = 1000.0 / 60.0;
+        private static double _desiredFrameLengthSeconds = 1.0 / 60.0;
         private static bool _limitFrameRate = true;
         private static VisibiltyManager _visibilityManager;
         private static ConstantDataProvider<DirectionalLightBuffer> _lightBufferProvider;
@@ -45,12 +47,9 @@ namespace Veldrid.RenderDemo
         private static double _circleWidth = 12.0;
         private static bool _wireframe;
 
-        private static bool _takeScreenshot;
-        private static ImGuiRenderer _imguiRenderer;
+        private static SwappableImGuiRenderer _imguiRenderer;
 
-        private static Framebuffer _screenshotFramebuffer;
         private static RasterizerState _wireframeRasterizerState;
-        private static MaterialAsset s_mtlMaterialAsset;
 
         private static Camera _camera;
         private static float _cameraYaw;
@@ -77,7 +76,6 @@ namespace Veldrid.RenderDemo
         private static Octree<ShadowCaster> _octree;
         private static List<RenderItem> _octreeCubes = new List<RenderItem>();
         private static Vector3 _octreeBoxPosition;
-        private static MaterialAsset _stoneMaterial;
         private static OctreeRenderer<ShadowCaster> _octreeRenderer;
         private static FrustumWireframeRenderer _octreeFrustumRenderer;
         private static Vector3 _octreeFrustumViewOrigin;
@@ -89,20 +87,27 @@ namespace Veldrid.RenderDemo
         private static List<float> _rayCastDistances = new List<float>();
         private static List<RenderItem> _sponzaQueryResult = new List<RenderItem>();
         private static BoundingBoxWireframeRenderer _sceneBoundsRenderer;
+        private static bool s_needsResizing;
 
-        public static void RunDemo(RenderContext renderContext, params RendererOption[] backendOptions)
+        public static void RunDemo(RenderContext renderContext, Window window, params RendererOption[] backendOptions)
         {
             try
             {
                 _rc = renderContext;
+                _window = window;
                 _backendOptions = backendOptions;
                 _selectedOption = backendOptions.FirstOrDefault();
 
+                _window.Resized += OnWindowResized;
+
                 _shadowMapStage = new ShadowMapStage(_rc);
+                StandardPipelineStage alphaBlendStage = new StandardPipelineStage(_rc, "AlphaBlend");
+                alphaBlendStage.Comparer = new FarToNearIndexComparer();
                 _configurableStages = new PipelineStage[]
                 {
                     _shadowMapStage,
                     new StandardPipelineStage(_rc, "Standard"),
+                    alphaBlendStage,
                     new StandardPipelineStage(_rc, "Overlay"),
                 };
 
@@ -111,7 +116,8 @@ namespace Veldrid.RenderDemo
                 _ad = new LooseFileDatabase(Path.Combine(AppContext.BaseDirectory, "Assets"));
                 _editorWindow = new AssetEditorWindow(_ad);
 
-                _imguiRenderer = new ImGuiRenderer(_rc);
+                _imguiRenderer = new SwappableImGuiRenderer(_rc, window);
+                _imguiRenderer.SetRenderStages(CommonStages.ImGui);
 
                 _lightBufferProvider = new ConstantDataProvider<DirectionalLightBuffer>(
                     new DirectionalLightBuffer(RgbaFloat.White, new Vector3(-.3f, -1f, -1f)));
@@ -120,64 +126,76 @@ namespace Veldrid.RenderDemo
                 _lightDirection = Vector3.Normalize(new Vector3(0f, -1f, -1f));
                 _lightInfoProvider.Data = new Vector4(_lightDirection, 1);
 
-                _camera = new Camera(_rc.Window);
-                float timeFactor = (float)DateTime.Now.TimeOfDay.TotalMilliseconds / 1000;
+                _camera = new Camera(window);
+                float timeFactor = (float)DateTime.UtcNow.TimeOfDay.TotalMilliseconds / 1000;
                 _camera.Position = new Vector3(
                     (float)(Math.Cos(timeFactor) * _circleWidth),
                     3 + (float)Math.Sin(timeFactor) * 2,
                     (float)(Math.Sin(timeFactor) * _circleWidth));
                 _camera.LookDirection = -_camera.Position;
 
-                _rc.RegisterGlobalDataProvider("ProjectionMatrix", _camera.ProjectionProvider);
-                _rc.RegisterGlobalDataProvider("ViewMatrix", _camera.ViewProvider);
-                _rc.RegisterGlobalDataProvider("LightBuffer", _lightBufferProvider);
-                _rc.RegisterGlobalDataProvider("LightViewMatrix", _lightViewMatrixProvider);
-                _rc.RegisterGlobalDataProvider("LightProjMatrix", _lightProjMatrixProvider);
-                _rc.RegisterGlobalDataProvider("LightInfo", _lightInfoProvider);
-                _rc.RegisterGlobalDataProvider("CameraInfo", _camera.CameraInfoProvider);
-                _rc.RegisterGlobalDataProvider("PointLights", _pointLightsProvider);
+                SharedDataProviders.ChangeRenderContext(_rc);
+                SharedDataProviders.RegisterGlobalDataProvider("ProjectionMatrix", _camera.ProjectionProvider);
+                SharedDataProviders.RegisterGlobalDataProvider("ViewMatrix", _camera.ViewProvider);
+                SharedDataProviders.RegisterGlobalDataProvider("LightBuffer", _lightBufferProvider);
+                SharedDataProviders.RegisterGlobalDataProvider("LightViewMatrix", _lightViewMatrixProvider);
+                SharedDataProviders.RegisterGlobalDataProvider("LightProjMatrix", _lightProjMatrixProvider);
+                SharedDataProviders.RegisterGlobalDataProvider("LightInfo", _lightInfoProvider);
+                SharedDataProviders.RegisterGlobalDataProvider("CameraInfo", _camera.CameraInfoProvider);
+                SharedDataProviders.RegisterGlobalDataProvider("PointLights", _pointLightsProvider);
                 _rc.ClearColor = RgbaFloat.CornflowerBlue;
 
                 UpdateLightMatrices();
                 UpdatePointLights();
 
-                CreateScreenshotFramebuffer();
                 CreateWireframeRasterizerState();
 
                 ChangeScene(SceneWithBoxes());
 
-                _fta = new FrameTimeAverager(666);
+                _fta = new FrameTimeAverager(0.666);
 
                 long previousFrameTicks = 0;
                 Stopwatch sw = new Stopwatch();
                 sw.Start();
-                while (_rc.Window.Exists)
+                while (window.Exists)
                 {
                     long currentFrameTicks = sw.ElapsedTicks;
-                    double deltaMilliseconds = (currentFrameTicks - previousFrameTicks) * (1000.0 / Stopwatch.Frequency);
+                    double deltaSeconds = (currentFrameTicks - previousFrameTicks) / (double)Stopwatch.Frequency;
 
-                    while (_limitFrameRate && deltaMilliseconds < _desiredFrameLengthMilliseconds)
+                    while (_limitFrameRate && deltaSeconds < _desiredFrameLengthSeconds)
                     {
                         currentFrameTicks = sw.ElapsedTicks;
-                        deltaMilliseconds = (currentFrameTicks - previousFrameTicks) * (1000.0 / Stopwatch.Frequency);
+                        deltaSeconds = (currentFrameTicks - previousFrameTicks) / (double)Stopwatch.Frequency;
                     }
 
                     previousFrameTicks = currentFrameTicks;
 
-                    var snapshot = _rc.Window.GetInputSnapshot();
+                    var snapshot = window.GetInputSnapshot();
                     InputTracker.UpdateFrameInput(snapshot);
-                    Update(deltaMilliseconds, snapshot);
+                    Update(deltaSeconds, snapshot);
                     Draw();
                 }
 
             }
-            catch when (!Debugger.IsAttached)
+            catch (Exception e) when (!Debugger.IsAttached)
             {
                 if (_rc is OpenGLRenderContext)
                 {
-                    // Console.WriteLine("GL Error: " + GL.GetError());
+                    OpenTK.Graphics.OpenGL.ErrorCode glError = OpenTK.Graphics.OpenGL.GL.GetError();
+                    if (glError != OpenTK.Graphics.OpenGL.ErrorCode.NoError)
+                    {
+                        Console.WriteLine("GL Error: " + glError);
+                    }
                 }
+
+                Console.WriteLine($"RenderDemo encountered an unhandled exception: {e.Message}");
+                Console.WriteLine(e.StackTrace);
             }
+        }
+
+        private static void OnWindowResized()
+        {
+            s_needsResizing = true;
         }
 
         private static void UpdatePointLights()
@@ -198,18 +216,13 @@ namespace Veldrid.RenderDemo
                 FaceCullingMode.None, TriangleFillMode.Wireframe, true, true);
         }
 
-        private static void CreateScreenshotFramebuffer()
-        {
-            _screenshotFramebuffer = _rc.ResourceFactory.CreateFramebuffer(_rc.Window.Width, _rc.Window.Height);
-        }
-
         private static FlatListVisibilityManager SceneWithBoxes()
         {
             if (_boxSceneVM == null)
             {
                 _boxSceneVM = new FlatListVisibilityManager();
                 var sphere = _ad.LoadAsset<ObjFile>(new AssetID("Models/Sphere.obj")).GetFirstMesh();
-                var tcr = new TexturedMeshRenderer(_ad, _rc, sphere.Vertices, sphere.Indices, Textures.CubeTexture);
+                var tcr = new TexturedMeshRenderer(_ad, _rc, sphere.Vertices, sphere.Indices, Textures.Stone);
                 tcr.Position = new Vector3(-5f, 0, -3);
                 _boxSceneVM.AddRenderItem(tcr);
 
@@ -241,7 +254,7 @@ namespace Veldrid.RenderDemo
                 teapot.Position = new Vector3(0, -1, 0);
                 teapot.Scale = new Vector3(1f);
 
-                var plane = new TexturedMeshRenderer(_ad, _rc, PlaneModel.Vertices, PlaneModel.Indices, Textures.WoodTexture);
+                var plane = new TexturedMeshRenderer(_ad, _rc, PlaneModel.Vertices, PlaneModel.Indices, Textures.Wood);
                 plane.Position = new Vector3(0, -2, 0);
                 plane.Scale = new Vector3(20, 1, 20);
 
@@ -261,7 +274,7 @@ namespace Veldrid.RenderDemo
                 InstancedSphereRenderer isr = new InstancedSphereRenderer(_ad, _rc);
                 _instancingScene.AddRenderItem(isr);
 
-                var plane = new TexturedMeshRenderer(_ad, _rc, PlaneModel.Vertices, PlaneModel.Indices, Textures.WoodTexture);
+                var plane = new TexturedMeshRenderer(_ad, _rc, PlaneModel.Vertices, PlaneModel.Indices, Textures.Wood);
                 plane.Position = new Vector3(0, -2, 0);
                 plane.Scale = new Vector3(20, 1, 20);
                 _instancingScene.AddRenderItem(plane);
@@ -287,15 +300,15 @@ namespace Veldrid.RenderDemo
                 gsb2.Position = new Vector3(7.5f, -2.5f, 7.5f);
 
                 var sphere = _ad.LoadAsset<ObjFile>(new AssetID("Models/Sphere.obj")).GetFirstMesh();
-                var tcr = new TexturedMeshRenderer(_ad, _rc, sphere.Vertices, sphere.Indices, Textures.CubeTexture);
+                var tcr = new TexturedMeshRenderer(_ad, _rc, sphere.Vertices, sphere.Indices, Textures.Stone);
                 tcr.Position = new Vector3(-5f, 0, 0);
                 _geometryShaderScene.AddRenderItem(tcr);
 
-                var tcr2 = new TexturedMeshRenderer(_ad, _rc, sphere.Vertices, sphere.Indices, Textures.CubeTexture);
+                var tcr2 = new TexturedMeshRenderer(_ad, _rc, sphere.Vertices, sphere.Indices, Textures.Stone);
                 tcr2.Position = new Vector3(5f, 0, 0);
                 _geometryShaderScene.AddRenderItem(tcr2);
 
-                var plane = new TexturedMeshRenderer(_ad, _rc, PlaneModel.Vertices, PlaneModel.Indices, Textures.WoodTexture);
+                var plane = new TexturedMeshRenderer(_ad, _rc, PlaneModel.Vertices, PlaneModel.Indices, Textures.Wood);
                 plane.Position = new Vector3(0, -5, 0);
                 plane.Scale = new Vector3(20, 1, 20);
                 _geometryShaderScene.AddRenderItem(plane);
@@ -310,32 +323,28 @@ namespace Veldrid.RenderDemo
             {
                 _shadowsScene = new OctreeVisibilityManager();
 
-                var stoneMaterial = _ad.LoadAsset<MaterialAsset>(new AssetID("MaterialAsset/ShadowCaster_Stone.json"));
-                var woodMaterial = _ad.LoadAsset<MaterialAsset>(new AssetID("MaterialAsset/ShadowCaster_Wood.json"));
-                var crateMaterial = _ad.LoadAsset<MaterialAsset>(new AssetID("MaterialAsset/ShadowCaster_Crate.json"));
-
-                var cube1 = new ShadowCaster(_rc, _ad, CubeModel.Vertices, CubeModel.Indices, crateMaterial);
+                var cube1 = new ShadowCaster(_rc, _ad, CubeModel.Vertices, CubeModel.Indices, Textures.Crate);
                 _shadowsScene.AddRenderItem(cube1.BoundingBox, cube1);
 
-                var cube2 = new ShadowCaster(_rc, _ad, CubeModel.Vertices, CubeModel.Indices, crateMaterial);
+                var cube2 = new ShadowCaster(_rc, _ad, CubeModel.Vertices, CubeModel.Indices, Textures.Crate);
                 cube2.Position = new Vector3(3f, 5f, 0f);
                 cube2.Scale = new Vector3(3f);
                 _shadowsScene.AddRenderItem(cube2.BoundingBox, cube2);
 
-                var cube3 = new ShadowCaster(_rc, _ad, CubeModel.Vertices, CubeModel.Indices, stoneMaterial);
+                var cube3 = new ShadowCaster(_rc, _ad, CubeModel.Vertices, CubeModel.Indices, Textures.Stone);
                 cube3.Position = new Vector3(-4f, 0f, 6f);
                 cube3.Rotation = Quaternion.CreateFromRotationMatrix(Matrix4x4.CreateRotationY(1));
                 _shadowsScene.AddRenderItem(cube3.BoundingBox, cube3);
 
                 var sphereModel = _ad.LoadAsset<ObjFile>(new AssetID("Models/Sphere.obj")).GetFirstMesh();
-                var sphere = new ShadowCaster(_rc, _ad, sphereModel.Vertices, sphereModel.Indices, stoneMaterial);
+                var sphere = new ShadowCaster(_rc, _ad, sphereModel.Vertices, sphereModel.Indices, Textures.Stone);
                 sphere.Position = new Vector3(18f, 3f, -18f);
                 sphere.Scale = new Vector3(4.0f);
                 sphere.Rotation = Quaternion.CreateFromRotationMatrix(Matrix4x4.CreateRotationY(1));
                 _shadowsScene.AddRenderItem(sphere.BoundingBox, sphere);
 
 
-                var plane = new ShadowCaster(_rc, _ad, PlaneModel.Vertices, PlaneModel.Indices, woodMaterial);
+                var plane = new ShadowCaster(_rc, _ad, PlaneModel.Vertices, PlaneModel.Indices, Textures.Wood);
                 plane.Position = new Vector3(0, -2.5f, 0);
                 plane.Scale = new Vector3(50f);
                 _shadowsScene.AddRenderItem(plane.BoundingBox, plane);
@@ -360,7 +369,6 @@ namespace Veldrid.RenderDemo
             if (_octreeScene == null)
             {
                 _octreeScene = new FlatListVisibilityManager();
-                _stoneMaterial = _ad.LoadAsset<MaterialAsset>(new AssetID("MaterialAsset/ShadowCaster_Stone.json"));
 
                 BoundingBox bounds = new BoundingBox(new Vector3(-25, -25, -25), new Vector3(25, 25, 25));
                 _octree = new Octree<ShadowCaster>(bounds, 3);
@@ -414,7 +422,7 @@ namespace Veldrid.RenderDemo
 
         private static void AddOctreeCube(Vector3 position)
         {
-            var cube = new ShadowCaster(_rc, _ad, CubeModel.Vertices, CubeModel.Indices, _stoneMaterial);
+            var cube = new ShadowCaster(_rc, _ad, CubeModel.Vertices, CubeModel.Indices, Textures.Stone);
             cube.Position = position;
             _octreeScene.AddRenderItem(cube);
             _octree.AddItem(cube.BoundingBox, cube);
@@ -439,25 +447,35 @@ namespace Veldrid.RenderDemo
                 var sphere = _ad.LoadAsset<ObjFile>(new AssetID("Models/Sphere.obj")).GetFirstMesh();
                 var pink = new RawTextureDataArray<RgbaFloat>(
                     new RgbaFloat[] { RgbaFloat.Pink }, 1, 1, RgbaFloat.SizeInBytes, PixelFormat.R32_G32_B32_A32_Float);
+                int zz = 0;
                 foreach (var group in atriumFile.MeshGroups)
                 {
+                    if ((++zz % 320) == 0)
+                    {
+
+                    }
                     ConstructedMeshInfo mesh = atriumFile.GetMesh(group);
                     MaterialDefinition materialDef = atriumMtls.Definitions[mesh.MaterialName];
-                    MaterialAsset matAsset = GetMtlMaterialAssetTemplate();
                     TextureData overrideTextureData = null;
                     if (materialDef.DiffuseTexture != null)
                     {
                         string texturePath = "Models/SponzaAtrium/" + materialDef.DiffuseTexture;
-                        overrideTextureData = _ad.LoadAsset<ImageSharpTexture>(texturePath);
+                        overrideTextureData = _ad.LoadAsset<ImageSharpMipmapChain>(texturePath);
                     }
                     else
                     {
                         overrideTextureData = pink;
                     }
 
-                    MtlShadowCaster sc = new MtlShadowCaster(_rc, _ad, mesh.Vertices, mesh.Indices, matAsset, overrideTextureData);
+                    MtlShadowCaster sc = new MtlShadowCaster(_rc, mesh.Vertices, mesh.Indices, overrideTextureData);
                     sc.Scale = new Vector3(0.1f);
                     sc.Name = group.Name + ":" + group.Material;
+                    if (materialDef.AlphaMap != null)
+                    {
+                        string texturePath = "Models/SponzaAtrium/" + materialDef.AlphaMap;
+                        sc.AlphaMap = _ad.LoadAsset<ImageSharpMipmapChain>(texturePath);
+                    }
+
                     Vector3 specularIntensity = Vector3.Zero;
                     if (materialDef.Name.Contains("vase"))
                     {
@@ -484,8 +502,8 @@ namespace Veldrid.RenderDemo
 
                 _sponzaAtrium.AddRenderItem(_imguiRenderer);
 
-                _sceneBoundsRenderer = new BoundingBoxWireframeRenderer(_sponzaAtrium.OctreeRootNode.GetPreciseBounds(), _ad, _rc);
-                _sponzaAtrium.AddRenderItem(_sceneBoundsRenderer);
+                //_sceneBoundsRenderer = new BoundingBoxWireframeRenderer(_sponzaAtrium.OctreeRootNode.GetPreciseBounds(), _ad, _rc);
+                //_sponzaAtrium.AddRenderItem(_sceneBoundsRenderer);
 
                 sw.Stop();
                 Console.WriteLine("Total elapsed loading time: " + sw.Elapsed);
@@ -494,19 +512,9 @@ namespace Veldrid.RenderDemo
             return _sponzaAtrium;
         }
 
-        private static MaterialAsset GetMtlMaterialAssetTemplate()
+        private static void Update(double deltaSeconds, InputSnapshot snapshot)
         {
-            if (s_mtlMaterialAsset == null)
-            {
-                s_mtlMaterialAsset = _ad.LoadAsset<MaterialAsset>(new AssetID("MaterialAsset/ShadowCaster_MtlTemplate.json"));
-            }
-
-            return s_mtlMaterialAsset;
-        }
-
-        private static void Update(double deltaMilliseconds, InputSnapshot snapshot)
-        {
-            float timeFactor = (float)DateTime.Now.TimeOfDay.TotalMilliseconds / 1000;
+            float timeFactor = (float)DateTime.UtcNow.TimeOfDay.TotalMilliseconds / 1000;
             if (_autoRotateCamera)
             {
                 _camera.Position = new Vector3(
@@ -526,20 +534,16 @@ namespace Veldrid.RenderDemo
                 _lightDirection = Vector3.Normalize(-position);
             }
 
-            _imguiRenderer.SetPerFrameImGuiData(_rc, (float)deltaMilliseconds);
-            _imguiRenderer.UpdateImGuiInput(_rc.Window, snapshot);
+            _imguiRenderer.Update(_window, (float)deltaSeconds);
+            _imguiRenderer.OnInputUpdated(_window, snapshot);
             DrawMainMenu();
 
-            _fta.AddTime(deltaMilliseconds);
-            string apiName = (_rc is OpenGLRenderContext) ? "OpenGL" : (_rc is OpenGLESRenderContext) ? "OpenGL ES" : "Direct3D";
-            _rc.Window.Title = $"[{apiName}] " + _fta.CurrentAverageFramesPerSecond.ToString("000.0 fps / ") + _fta.CurrentAverageFrameTime.ToString("#00.00 ms");
+            _fta.AddTime(deltaSeconds);
+            string apiName = GetApiName();
+            _window.Title = $"[{apiName}] " + _fta.CurrentAverageFramesPerSecond.ToString("000.0 fps / ") + _fta.CurrentAverageFrameTimeMilliseconds.ToString("#00.00 ms");
             if (InputTracker.GetKeyDown(Key.F4) && (InputTracker.GetKey(Key.AltLeft) || InputTracker.GetKey(Key.AltRight)))
             {
-                _rc.Window.Close();
-            }
-            if (InputTracker.GetKeyDown(Key.PrintScreen))
-            {
-                ((ShadowMapStage)_renderer.Stages[0]).SaveNextFrame();
+                _window.Close();
             }
             if (InputTracker.GetKeyDown(Key.F11))
             {
@@ -598,7 +602,7 @@ namespace Veldrid.RenderDemo
             }
             if (_visibilityManager == _shadowsScene || _visibilityManager == _sponzaAtrium)
             {
-                _sceneBoundsRenderer.Box = ((OctreeVisibilityManager)_visibilityManager).OctreeRootNode.GetPreciseBounds();
+                //_sceneBoundsRenderer.Box = ((OctreeVisibilityManager)_visibilityManager).OctreeRootNode.GetPreciseBounds();
             }
             UpdateLightMatrices();
             UpdatePointLights();
@@ -617,7 +621,7 @@ namespace Veldrid.RenderDemo
             Vector3 cameraRight = Vector3.Normalize(Vector3.Cross(_camera.LookDirection, Vector3.UnitY));
             Vector3 cameraUp = Vector3.Normalize(Vector3.Cross(cameraRight, _camera.LookDirection));
 
-            float deltaSec = (float)deltaMilliseconds / 1000f;
+            float deltaSecondsFloat = (float)deltaSeconds;
 
             if (!ImGui.IsMouseHoveringAnyWindow() && !ImGui.IsAnyItemActive() && !_autoRotateCamera
                 && (InputTracker.GetMouseButton(MouseButton.Left) || InputTracker.GetMouseButton(MouseButton.Right)))
@@ -631,35 +635,35 @@ namespace Veldrid.RenderDemo
                     sprintFactor = InputTracker.GetKey(Key.ControlLeft) ? (1f / (3 * _cameraSprintFactor)) : sprintFactor;
                     if (InputTracker.GetKey(Key.W))
                     {
-                        _camera.Position += _camera.LookDirection * _cameraMoveSpeed * sprintFactor * deltaSec;
+                        _camera.Position += _camera.LookDirection * _cameraMoveSpeed * sprintFactor * deltaSecondsFloat;
                         if (_camera.UseOrthographicProjection)
                         {
-                            _camera.OrthographicWidth -= 5f * deltaSec * sprintFactor;
+                            _camera.OrthographicWidth -= 5f * deltaSecondsFloat * sprintFactor;
                         }
                     }
                     if (InputTracker.GetKey(Key.S))
                     {
-                        _camera.Position -= _camera.LookDirection * _cameraMoveSpeed * sprintFactor * deltaSec;
+                        _camera.Position -= _camera.LookDirection * _cameraMoveSpeed * sprintFactor * deltaSecondsFloat;
                         if (_camera.UseOrthographicProjection)
                         {
-                            _camera.OrthographicWidth += 5f * deltaSec * sprintFactor;
+                            _camera.OrthographicWidth += 5f * deltaSecondsFloat * sprintFactor;
                         }
                     }
                     if (InputTracker.GetKey(Key.D))
                     {
-                        _camera.Position += cameraRight * _cameraMoveSpeed * sprintFactor * deltaSec;
+                        _camera.Position += cameraRight * _cameraMoveSpeed * sprintFactor * deltaSecondsFloat;
                     }
                     if (InputTracker.GetKey(Key.A))
                     {
-                        _camera.Position -= cameraRight * _cameraMoveSpeed * sprintFactor * deltaSec;
+                        _camera.Position -= cameraRight * _cameraMoveSpeed * sprintFactor * deltaSecondsFloat;
                     }
                     if (InputTracker.GetKey(Key.E))
                     {
-                        _camera.Position += cameraUp * _cameraMoveSpeed * sprintFactor * deltaSec;
+                        _camera.Position += cameraUp * _cameraMoveSpeed * sprintFactor * deltaSecondsFloat;
                     }
                     if (InputTracker.GetKey(Key.Q))
                     {
-                        _camera.Position -= cameraUp * _cameraMoveSpeed * sprintFactor * deltaSec;
+                        _camera.Position -= cameraUp * _cameraMoveSpeed * sprintFactor * deltaSecondsFloat;
                     }
                 }
             }
@@ -673,8 +677,6 @@ namespace Veldrid.RenderDemo
             }
 
             _editorWindow.Render(_rc);
-
-            _imguiRenderer.UpdateFinished();
         }
 
         private static int OctreeFilter(Ray ray, ShadowCaster item, List<RayCastHit<ShadowCaster>> hits)
@@ -712,7 +714,7 @@ namespace Veldrid.RenderDemo
                 _camera.FieldOfViewRadians,
                 _camera.NearPlaneDistance,
                 _camera.FarPlaneDistance,
-                (float)_rc.Window.Width / (float)_rc.Window.Height,
+                (float)_window.Width / (float)_window.Height,
                 out corners);
 
             // Approach used: http://alextardif.com/ShadowMapping.html
@@ -758,7 +760,7 @@ namespace Veldrid.RenderDemo
 
         private static void ToggleFullScreenState()
         {
-            _rc.Window.WindowState = _rc.Window.WindowState == WindowState.FullScreen ? WindowState.Normal : WindowState.FullScreen;
+            _window.WindowState = _window.WindowState == WindowState.BorderlessFullScreen ? WindowState.Normal : WindowState.BorderlessFullScreen;
         }
 
         private static void DrawMainMenu()
@@ -852,7 +854,7 @@ namespace Veldrid.RenderDemo
                 }
                 if (ImGui.BeginMenu("View"))
                 {
-                    if (ImGui.MenuItem("Full Screen", "F11", _rc.Window.WindowState == WindowState.FullScreen, true))
+                    if (ImGui.MenuItem("Full Screen", "F11", _window.WindowState == WindowState.BorderlessFullScreen, true))
                     {
                         ToggleFullScreenState();
                     }
@@ -869,7 +871,7 @@ namespace Veldrid.RenderDemo
                     }
                     if (ImGui.Checkbox("Limit Framerate", ref _limitFrameRate))
                     {
-                        var threadedWindow = _rc.Window as DedicatedThreadWindow;
+                        var threadedWindow = _window as Sdl2.Sdl2Window;
                         if (threadedWindow != null)
                         {
                             threadedWindow.LimitPollRate = _limitFrameRate;
@@ -878,7 +880,7 @@ namespace Veldrid.RenderDemo
 
                     ImGui.Checkbox("Auto-Rotate Light", ref _moveLight);
 
-                    string apiName = (_rc is OpenGLRenderContext) ? "OpenGL" : (_rc is OpenGLESRenderContext) ? "OpenGL ES" : "Direct3D";
+                    string apiName = GetApiName();
                     if (ImGui.BeginMenu($"Renderer: {apiName}"))
                     {
                         foreach (var option in _backendOptions)
@@ -993,9 +995,10 @@ namespace Veldrid.RenderDemo
                     }
                     ImGui.EndMenu();
                 }
-                if (_rc.Window.WindowState == WindowState.FullScreen)
+                if (_window.WindowState == WindowState.BorderlessFullScreen)
                 {
-                    ImGui.Text(string.Format("{0} FPS ({1} ms)", _fta.CurrentAverageFramesPerSecond.ToString("0.0"), _fta.CurrentAverageFrameTime.ToString("#00.00")));
+                    string apiName = GetApiName();
+                    ImGui.Text($"[{apiName}] " + _fta.CurrentAverageFramesPerSecond.ToString("000.0 fps / ") + _fta.CurrentAverageFrameTimeMilliseconds.ToString("#00.00 ms"));
                 }
 
                 ImGui.EndMainMenuBar();
@@ -1009,8 +1012,8 @@ namespace Veldrid.RenderDemo
             if (ImGui.BeginPopup("AboutVeldridPopup"))
             {
                 ImGui.Text(
-@"Veldrid is an experimental renderer with Direct3D
-and OpenGL backends, built with .NET Core.");
+@"Veldrid is an experimental renderer with Direct3D, Vulkan, OpenGL,
+and OpenGL ES backends, built with .NET Core.");
                 ImGui.Text(
 @"Source code is freely available at
 https://github.com/mellinoe/veldrid.");
@@ -1018,10 +1021,21 @@ https://github.com/mellinoe/veldrid.");
 @"OpenGL bindings using OpenTK (https://github.com/opentk/opentk).");
                 ImGui.Text(
 @"Direct3D bindings using SharpDX (https://github.com/sharpdx/sharpdx).");
+                ImGui.Text(
+@"Vulkan bindings using vk (https://github.com/mellinoe/vk).");
                 ImGui.EndPopup();
             }
 
             DrawPreferencesEditor();
+        }
+
+        private static string GetApiName()
+        {
+            return (_rc is OpenGLRenderContext) ? "OpenGL"
+                : (_rc is OpenGLESRenderContext) ? "OpenGL ES"
+                : (_rc is VkRenderContext) ? "Vulkan"
+                : (_rc is D3DRenderContext) ? "Direct3D"
+                : (_rc.GetType().Name);
         }
 
         private static void ChangeScene(VisibiltyManager vm)
@@ -1038,7 +1052,7 @@ https://github.com/mellinoe/veldrid.");
                 {
                     object prefs = Preferences.Instance;
                     Drawer d = new ComplexItemDrawer(typeof(Preferences), false);
-                    ImGui.SetNextTreeNodeOpened(true, SetCondition.FirstUseEver);
+                    ImGui.SetNextTreeNodeOpen(true, SetCondition.FirstUseEver);
                     d.Draw("Preferences", ref prefs, _rc);
                     if (ImGui.Button("Save"))
                     {
@@ -1055,16 +1069,7 @@ https://github.com/mellinoe/veldrid.");
             {
                 CreatedResourceCache.ClearCache();
                 ImGuiImageHelper.InvalidateCache();
-
-                foreach (var kvp in _rc.GetAllGlobalBufferProviderPairs())
-                {
-                    kvp.Value.Dispose();
-                    newContext.RegisterGlobalDataProvider(kvp.Key, kvp.Value.DataProvider);
-                }
-                foreach (var kvp in _rc.TextureProviders)
-                {
-                    newContext.TextureProviders[kvp.Key] = kvp.Value;
-                }
+                SharedDataProviders.ChangeRenderContext(newContext);
 
                 _renderer.SetRenderContext(newContext);
 
@@ -1118,7 +1123,6 @@ https://github.com/mellinoe/veldrid.");
                     }
                 }
 
-                _rc.Dispose();
                 _rc = newContext;
 
                 CreateWireframeRasterizerState();
@@ -1131,34 +1135,17 @@ https://github.com/mellinoe/veldrid.");
 
         private unsafe static void Draw()
         {
-            if (_takeScreenshot)
-            {
-                CreateScreenshotFramebuffer();
-                _rc.SetFramebuffer(_screenshotFramebuffer);
-                _rc.ClearBuffer();
-            }
-
             BoundingFrustum frustum = new BoundingFrustum(_camera.ViewProvider.Data * _camera.ProjectionProvider.Data);
             ((StandardPipelineStage)_renderer.Stages[1]).CameraFrustum = frustum;
 
-            _renderer.RenderFrame(_visibilityManager, _camera.Position);
-            _imguiRenderer.NewFrame();
-
-            if (_takeScreenshot)
+            if (s_needsResizing)
             {
-                _takeScreenshot = false;
-                _rc.SetDefaultFramebuffer();
-                int width = _rc.Window.Width;
-                int height = _rc.Window.Height;
-                var cpuDepthTexture = new RawTextureDataArray<ushort>(width, height, sizeof(ushort), Graphics.PixelFormat.Alpha_UInt16);
-                _screenshotFramebuffer.DepthTexture.CopyTo(cpuDepthTexture);
-
-                ImageSharp.Image image = new ImageSharp.Image(width, height);
-                PixelFormatConversion.ConvertPixelsUInt16DepthToRgbaFloat(width * height, cpuDepthTexture.PixelData, image.Pixels);
-                ImageSharpTexture rgbaDepthTexture = new ImageSharpTexture(image);
-                Console.WriteLine($"Saving file: {width} x {height}, ratio:{(double)width / height}");
-                rgbaDepthTexture.SaveToFile(Environment.TickCount + ".png");
+                s_needsResizing = false;
+                _rc.ResizeMainWindow(_window.Width, _window.Height);
             }
+
+            SharedDataProviders.UpdateBuffers();
+            _renderer.RenderFrame(_visibilityManager, _camera.Position);
         }
 
         private static TextureData LoadStoneTextureData()
@@ -1174,12 +1161,13 @@ https://github.com/mellinoe/veldrid.");
             private int _frameCount = 0;
             private readonly double _decayRate = .3;
 
-            public double CurrentAverageFrameTime { get; private set; }
-            public double CurrentAverageFramesPerSecond { get { return 1000 / CurrentAverageFrameTime; } }
+            public double CurrentAverageFrameTimeSeconds { get; private set; }
+            public double CurrentAverageFrameTimeMilliseconds => CurrentAverageFrameTimeSeconds * 1000.0;
+            public double CurrentAverageFramesPerSecond => 1 / CurrentAverageFrameTimeSeconds;
 
-            public FrameTimeAverager(double maxTimeMilliseconds)
+            public FrameTimeAverager(double maxTimeSeconds)
             {
-                _timeLimit = maxTimeMilliseconds;
+                _timeLimit = maxTimeSeconds;
             }
 
             public void Reset()
@@ -1188,9 +1176,9 @@ https://github.com/mellinoe/veldrid.");
                 _frameCount = 0;
             }
 
-            public void AddTime(double frameTime)
+            public void AddTime(double seconds)
             {
-                _accumulatedTime += frameTime;
+                _accumulatedTime += seconds;
                 _frameCount++;
                 if (_accumulatedTime >= _timeLimit)
                 {
@@ -1201,8 +1189,8 @@ https://github.com/mellinoe/veldrid.");
             private void Average()
             {
                 double total = _accumulatedTime;
-                CurrentAverageFrameTime =
-                    (CurrentAverageFrameTime * _decayRate)
+                CurrentAverageFrameTimeSeconds =
+                    (CurrentAverageFrameTimeSeconds * _decayRate)
                     + ((total / _frameCount) * (1 - _decayRate));
 
                 _accumulatedTime = 0;

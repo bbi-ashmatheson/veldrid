@@ -1,20 +1,34 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <PackageVersion>1.0.3</PackageVersion>
-    <AssemblyVersion>$(PackageVersion)</AssemblyVersion>
-    <TargetFramework>netstandard1.3</TargetFramework>
+    <AssemblyVersion>3.0.0</AssemblyVersion>
+    <TargetFramework>netstandard1.6</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
-    <PackageTargetFallback>portable-net45+win8+wpa81</PackageTargetFallback>
-    <DocumentationFile Condition="'$(ProduceDocumentation)' == 'true'">$(BinDir)/$(AssemblyName).xml</DocumentationFile>
+    <DocumentationFile Condition="'$(Configuration)' == 'Release'">$(BinDir)/$(AssemblyName).xml</DocumentationFile>
   </PropertyGroup>
   <ItemGroup>
-    <EmbeddedResource Include="Assets/GLSL/*" />
-    <EmbeddedResource Include="Assets/HLSL/*" />
+    <EmbeddedResource Include="Assets/GLSL/imgui-vertex.glsl">
+      <LogicalName>imgui-vertex.glsl</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets/GLSL/imgui-frag.glsl">
+      <LogicalName>imgui-frag.glsl</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets/HLSL/imgui-vertex.hlsl">
+      <LogicalName>imgui-vertex.hlsl</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets/HLSL/imgui-frag.hlsl">
+      <LogicalName>imgui-frag.hlsl</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets/SPIR-V/imgui-vertex.spv">
+      <LogicalName>imgui-vertex.spv</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets/SPIR-V/imgui-frag.spv">
+      <LogicalName>imgui-frag.spv</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../Veldrid/Veldrid.csproj" />
-    <PackageReference Include="ImGui.NET" Version="0.1.9" />
+    <PackageReference Include="ImGui.NET" Version="0.2.1" />
   </ItemGroup>
   <Import Project="$(MSBuildThisFileDirectory)PackageInfo.props" />
 </Project>

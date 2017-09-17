@@ -1,6 +1,4 @@
 ﻿using ImGuiNET;
-using OpenTK;
-using OpenTK.Input;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -10,6 +8,8 @@ using Veldrid.Platform;
 using System.Runtime.InteropServices;
 
 using Key = Veldrid.Platform.Key;
+using System.Reflection;
+using System.IO;
 
 namespace Veldrid
 {
@@ -17,14 +17,12 @@ namespace Veldrid
     /// A Veldrid RenderItem which can draw draw lists produced by ImGui.
     /// Also provides functions for updating ImGui input.
     /// </summary>
-    public class ImGuiRenderer : RenderItem, IDisposable
+    public class ImGuiRenderer : IDisposable
     {
-        private readonly DynamicDataProvider<Matrix4x4> _projectionMatrixProvider;
-        private RawTextureDataArray<int> _fontTexture;
-        private FontTextureData _textureData;
+        private RenderContext _rc;
+        private readonly Assembly _assembly;
 
         // Context objects
-        private Material _material;
         private VertexBuffer _vertexBuffer;
         private IndexBuffer _indexBuffer;
         private BlendState _blendState;
@@ -32,8 +30,12 @@ namespace Veldrid
         private RasterizerState _rasterizerState;
         private ShaderTextureBinding _fontTextureBinding;
 
+        // Material replacements
+        private ShaderSet _shaderSet;
+        private ShaderResourceBindingSlots _resourceBindings;
+        private ConstantBuffer _projMatrixBuffer;
+
         private int _fontAtlasID = 1;
-        private RenderContext _rc;
         private bool _controlDown;
         private bool _shiftDown;
         private bool _altDown;
@@ -41,51 +43,106 @@ namespace Veldrid
         /// <summary>
         /// Constructs a new ImGuiRenderer.
         /// </summary>
-        public ImGuiRenderer(RenderContext rc, NativeWindow window)
+        public ImGuiRenderer(RenderContext rc, Window window)
         {
             _rc = rc;
+            _assembly = typeof(ImGuiRenderer).GetTypeInfo().Assembly;
+
             ImGui.GetIO().FontAtlas.AddDefaultFont();
-            _projectionMatrixProvider = new DynamicDataProvider<Matrix4x4>();
 
             InitializeContextObjects(rc);
             SetOpenTKKeyMappings();
 
-            SetPerFrameImGuiData(rc, 1f / 60f);
+            SetPerFrameImGuiData(window, 1f / 60f);
 
             ImGui.NewFrame();
+        }
+
+        public void SetRenderContext(RenderContext rc)
+        {
+            Dispose();
+            _rc = rc;
+            InitializeContextObjects(rc);
         }
 
         private void InitializeContextObjects(RenderContext rc)
         {
             ResourceFactory factory = rc.ResourceFactory;
-            _vertexBuffer = factory.CreateVertexBuffer(500, false);
-            _indexBuffer = factory.CreateIndexBuffer(100, false);
+            _vertexBuffer = factory.CreateVertexBuffer(1000, true);
+            _indexBuffer = factory.CreateIndexBuffer(500, true);
             _blendState = factory.CreateCustomBlendState(
                 true,
                 Blend.InverseSourceAlpha, Blend.Zero, BlendFunction.Add,
-                Blend.SourceAlpha, Blend.InverseSourceAlpha, BlendFunction.Add);
+                Blend.SourceAlpha, Blend.InverseSourceAlpha, BlendFunction.Add,
+                RgbaFloat.Black);
             _depthDisabledState = factory.CreateDepthStencilState(false, DepthComparison.Always);
             _rasterizerState = factory.CreateRasterizerState(FaceCullingMode.None, TriangleFillMode.Solid, true, true);
             RecreateFontDeviceTexture(rc);
-            _material = factory.CreateMaterial(
-                rc,
-                "imgui-vertex", "imgui-frag",
-                new MaterialVertexInput(20, new MaterialVertexInputElement[]
+
+            var vertexShaderCode = LoadEmbeddedShaderCode(rc.ResourceFactory, "imgui-vertex", ShaderStages.Vertex);
+            var fragmentShaderCode = LoadEmbeddedShaderCode(rc.ResourceFactory, "imgui-frag", ShaderStages.Fragment);
+            Shader vertexShader = factory.CreateShader(ShaderStages.Vertex, vertexShaderCode);
+            Shader fragmentShader = factory.CreateShader(ShaderStages.Fragment, fragmentShaderCode);
+
+            VertexInputLayout inputLayout = factory.CreateInputLayout(
+                new VertexInputDescription(20, new VertexInputElement[]
                 {
-                    new MaterialVertexInputElement("in_position", VertexSemanticType.Position, VertexElementFormat.Float2),
-                    new MaterialVertexInputElement("in_texcoord", VertexSemanticType.TextureCoordinate, VertexElementFormat.Float2),
-                    new MaterialVertexInputElement("in_color", VertexSemanticType.Color, VertexElementFormat.Byte4)
-                }),
-                new MaterialInputs<MaterialGlobalInputElement>(new MaterialGlobalInputElement[]
-                {
-                    new MaterialGlobalInputElement("ProjectionMatrixBuffer", MaterialInputType.Matrix4x4, _projectionMatrixProvider)
-                }),
-                MaterialInputs<MaterialPerObjectInputElement>.Empty,
-                new MaterialTextureInputs(new MaterialTextureInputElement[]
-                {
-                    new TextureDataInputElement("surfaceTexture", _fontTexture)
+                    new VertexInputElement("in_position", VertexSemanticType.Position, VertexElementFormat.Float2),
+                    new VertexInputElement("in_texcoord", VertexSemanticType.TextureCoordinate, VertexElementFormat.Float2),
+                    new VertexInputElement("in_color", VertexSemanticType.Color, VertexElementFormat.Byte4)
                 }));
 
+            _shaderSet = factory.CreateShaderSet(inputLayout, vertexShader, fragmentShader);
+
+            _resourceBindings = factory.CreateShaderResourceBindingSlots(
+                _shaderSet,
+                new ShaderResourceDescription("ProjectionMatrixBuffer", ShaderConstantType.Matrix4x4),
+                new ShaderResourceDescription("FontTexture", ShaderResourceType.Texture),
+                new ShaderResourceDescription("FontSampler", ShaderResourceType.Sampler));
+            _projMatrixBuffer = factory.CreateConstantBuffer(ShaderConstantType.Matrix4x4);
+        }
+
+        private CompiledShaderCode LoadEmbeddedShaderCode(ResourceFactory factory, string name, ShaderStages stage)
+        {
+            switch (factory.BackendType)
+            {
+                case GraphicsBackend.Direct3D11:
+                    {
+                        string resourceName = name + ".hlsl";
+                        return factory.ProcessShaderCode(stage, GetEmbeddedResourceText(resourceName));
+                    }
+                case GraphicsBackend.OpenGL:
+                case GraphicsBackend.OpenGLES:
+                    {
+                        string resourceName = name + ".glsl";
+                        return factory.ProcessShaderCode(stage, GetEmbeddedResourceText(resourceName));
+                    }
+                case GraphicsBackend.Vulkan:
+                    {
+                        string resourceName = name + ".spv";
+                        return factory.LoadProcessedShader(GetEmbeddedResourceBytes(resourceName));
+                    }
+                default:
+                    throw new NotImplementedException();
+            }
+        }
+
+        private string GetEmbeddedResourceText(string resourceName)
+        {
+            using (StreamReader sr = new StreamReader(_assembly.GetManifestResourceStream(resourceName)))
+            {
+                return sr.ReadToEnd();
+            }
+        }
+
+        private byte[] GetEmbeddedResourceBytes(string resourceName)
+        {
+            using (Stream s = _assembly.GetManifestResourceStream(resourceName))
+            {
+                byte[] ret = new byte[s.Length];
+                s.Read(ret, 0, (int)s.Length);
+                return ret;
+            }
         }
 
         /// <summary>
@@ -95,32 +152,34 @@ namespace Veldrid
         {
             var io = ImGui.GetIO();
             // Build
-            _textureData = io.FontAtlas.GetTexDataAsRGBA32();
-            int[] pixels = new int[_textureData.Width * _textureData.Height];
-            for (int i = 0; i < pixels.Length; i++)
-            {
-                pixels[i] = ((int*)_textureData.Pixels)[i];
-            }
-
-            _fontTexture = new RawTextureDataArray<int>(pixels, _textureData.Width, _textureData.Height, _textureData.BytesPerPixel, PixelFormat.R8_G8_B8_A8);
+            var textureData = io.FontAtlas.GetTexDataAsRGBA32();
 
             // Store our identifier
             io.FontAtlas.SetTexID(_fontAtlasID);
 
-            var deviceTexture = rc.ResourceFactory.CreateTexture(_fontTexture.PixelData, _textureData.Width, _textureData.Height, _textureData.BytesPerPixel, PixelFormat.R8_G8_B8_A8);
+            var deviceTexture = rc.ResourceFactory.CreateTexture(1, textureData.Width, textureData.Height, PixelFormat.R8_G8_B8_A8_UInt);
+            deviceTexture.SetTextureData(
+                0,
+                0, 0,
+                textureData.Width,
+                textureData.Height,
+                (IntPtr)textureData.Pixels,
+                textureData.BytesPerPixel * textureData.Width * textureData.Height);
             _fontTextureBinding = rc.ResourceFactory.CreateShaderTextureBinding(deviceTexture);
 
             io.FontAtlas.ClearTexData();
         }
 
-        private string[] s_stages = { "Standard" };
+        private string[] _stages = { "Standard" };
+
+        public void SetRenderStages(string[] stages) { _stages = stages; }
 
         /// <summary>
         /// Gets a list of stages participated by this RenderItem.
         /// </summary>
         public IList<string> GetStagesParticipated()
         {
-            return s_stages;
+            return _stages;
         }
 
         /// <summary>
@@ -133,76 +192,47 @@ namespace Veldrid
         }
 
         /// <summary>
-        /// Gets the RenderOrderKey for this RenderItem.
-        /// </summary>
-        public RenderOrderKey GetRenderOrderKey(System.Numerics.Vector3 position)
-        {
-            return new RenderOrderKey();
-        }
-
-        /// <summary>
         /// Updates ImGui input and IO configuration state.
         /// </summary>
-        public void Update(float deltaSeconds)
+        public void Update(Window window, float deltaSeconds)
         {
-            SetPerFrameImGuiData(_rc, deltaSeconds);
+            SetPerFrameImGuiData(window, deltaSeconds);
         }
 
         /// <summary>
         /// Sets per-frame data based on the RenderContext and window.
         /// This is called by Update(float).
         /// </summary>
-        public unsafe void SetPerFrameImGuiData(RenderContext rc, float deltaSeconds)
+        private unsafe void SetPerFrameImGuiData(Window window, float deltaSeconds)
         {
             IO io = ImGui.GetIO();
             io.DisplaySize = new System.Numerics.Vector2(
-                rc.Window.Width / rc.Window.ScaleFactor.X,
-                rc.Window.Height / rc.Window.ScaleFactor.Y);
-            io.DisplayFramebufferScale = rc.Window.ScaleFactor;
-            io.DeltaTime = deltaSeconds / 1000; // DeltaTime is in seconds.
+                window.Width / window.ScaleFactor.X,
+                window.Height / window.ScaleFactor.Y);
+            io.DisplayFramebufferScale = window.ScaleFactor;
+            io.DeltaTime = deltaSeconds; // DeltaTime is in seconds.
         }
 
         /// <summary>
         /// Updates the current input state tracked by ImGui.
         /// This calls ImGui.NewFrame().
         /// </summary>
-        public void OnInputUpdated(InputSnapshot snapshot)
+        public void OnInputUpdated(Window window, InputSnapshot snapshot)
         {
-            UpdateImGuiInput((OpenTKWindow)_rc.Window, snapshot);
+            UpdateImGuiInput(window, snapshot);
             ImGui.NewFrame();
         }
 
-        private unsafe void UpdateImGuiInput(OpenTKWindow window, InputSnapshot snapshot)
+        private unsafe void UpdateImGuiInput(Window window, InputSnapshot snapshot)
         {
             IO io = ImGui.GetIO();
-            MouseState cursorState = Mouse.GetCursorState();
-            MouseState mouseState = Mouse.GetState();
 
-            if (window.NativeWindow.Bounds.Contains(cursorState.X, cursorState.Y) && !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            {
-                // TODO: This does not take into account viewport coordinates.
-                if (window.Exists)
-                {
-                    Point windowPoint = window.NativeWindow.PointToClient(new Point(cursorState.X, cursorState.Y));
-                    io.MousePosition = new System.Numerics.Vector2(
-                        windowPoint.X / window.ScaleFactor.X,
-                        windowPoint.Y / window.ScaleFactor.Y);
-                }
-            }
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            {
-                io.MousePosition = new System.Numerics.Vector2(
-                        cursorState.X,
-                        cursorState.Y);
-            }
-            else
-            {
-                io.MousePosition = new System.Numerics.Vector2(-1f, -1f);
-            }
+            Vector2 mousePosition = snapshot.MousePosition;
 
-            io.MouseDown[0] = mouseState.LeftButton == ButtonState.Pressed;
-            io.MouseDown[1] = mouseState.RightButton == ButtonState.Pressed;
-            io.MouseDown[2] = mouseState.MiddleButton == ButtonState.Pressed;
+            io.MousePosition = mousePosition;
+            io.MouseDown[0] = snapshot.IsMouseDown(MouseButton.Left);
+            io.MouseDown[1] = snapshot.IsMouseDown(MouseButton.Right);
+            io.MouseDown[2] = snapshot.IsMouseDown(MouseButton.Middle);
 
             float delta = snapshot.WheelDelta;
             io.MouseWheel = delta;
@@ -281,7 +311,7 @@ namespace Veldrid
                 NativeDrawList* cmd_list = draw_data->CmdLists[i];
 
                 _vertexBuffer.SetVertexData(new IntPtr(cmd_list->VtxBuffer.Data), descriptor, cmd_list->VtxBuffer.Size, vertexOffsetInVertices);
-                _indexBuffer.SetIndices(new IntPtr(cmd_list->IdxBuffer.Data), IndexFormat.UInt16, sizeof(ushort), cmd_list->IdxBuffer.Size, indexOffsetInElements);
+                _indexBuffer.SetIndices(new IntPtr(cmd_list->IdxBuffer.Data), IndexFormat.UInt16, cmd_list->IdxBuffer.Size, indexOffsetInElements);
 
                 vertexOffsetInVertices += cmd_list->VtxBuffer.Size;
                 indexOffsetInElements += cmd_list->IdxBuffer.Size;
@@ -299,7 +329,7 @@ namespace Veldrid
                     -1.0f,
                     1.0f);
 
-                _projectionMatrixProvider.Data = mvp;
+                _projMatrixBuffer.SetData(ref mvp, sizeof(Matrix4x4));
             }
 
             BlendState previousBlendState = rc.BlendState;
@@ -307,9 +337,13 @@ namespace Veldrid
             rc.SetDepthStencilState(_depthDisabledState);
             RasterizerState previousRasterizerState = rc.RasterizerState;
             rc.SetRasterizerState(_rasterizerState);
-            rc.SetVertexBuffer(_vertexBuffer);
-            rc.SetIndexBuffer(_indexBuffer);
-            rc.SetMaterial(_material);
+            rc.VertexBuffer = _vertexBuffer;
+            rc.IndexBuffer = _indexBuffer;
+
+            rc.ShaderSet = _shaderSet;
+            rc.ShaderResourceBindingSlots = _resourceBindings;
+            rc.SetConstantBuffer(0, _projMatrixBuffer);
+            rc.SetSamplerState(2, _rc.PointSampler);
 
             ImGui.ScaleClipRects(draw_data, ImGui.GetIO().DisplayFramebufferScale);
 
@@ -332,12 +366,12 @@ namespace Veldrid
                         {
                             if (pcmd->TextureId == new IntPtr(_fontAtlasID))
                             {
-                                _material.UseTexture(0, _fontTextureBinding);
+                                _rc.SetTexture(1, _fontTextureBinding);
                             }
                             else
                             {
                                 ShaderTextureBinding binding = ImGuiImageHelper.GetShaderTextureBinding(pcmd->TextureId);
-                                _material.UseTexture(0, binding);
+                                _rc.SetTexture(1, binding);
                             }
                         }
 
@@ -369,10 +403,11 @@ namespace Veldrid
         {
             _vertexBuffer.Dispose();
             _indexBuffer.Dispose();
-            _material.Dispose();
             _depthDisabledState.Dispose();
             _blendState.Dispose();
             _fontTextureBinding.Dispose();
+
+            _shaderSet.Dispose();
         }
 
         /// <summary>

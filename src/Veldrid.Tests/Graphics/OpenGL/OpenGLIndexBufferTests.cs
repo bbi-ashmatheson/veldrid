@@ -12,8 +12,8 @@ namespace Veldrid.Graphics.OpenGL
 
         public OpenGLIndexBufferTests()
         {
-            _context = new OpenGLRenderContext(new TestWindow());
-            _factory = new OpenGLResourceFactory();
+            _context = TestData.CreateDefaultOpenGLRenderContext(TestData.CreateTestWindow());
+            _factory = (OpenGLResourceFactory)_context.ResourceFactory;
         }
 
         [Fact]
@@ -21,11 +21,11 @@ namespace Veldrid.Graphics.OpenGL
         {
             OpenGLIndexBuffer ib = (OpenGLIndexBuffer)_factory.CreateIndexBuffer(1, false);
 
-            int[] indexData = Enumerable.Range(0, 150).ToArray();
+            uint[] indexData = Enumerable.Range(0, 150).Select(i => (uint)i).ToArray();
             ib.SetIndices(indexData);
 
-            int[] returned = new int[indexData.Length];
-            ib.GetData(returned, returned.Length * 4);
+            uint[] returned = new uint[indexData.Length];
+            ib.GetData(returned);
             Assert.Equal(indexData, returned);
         }
 
@@ -37,10 +37,10 @@ namespace Veldrid.Graphics.OpenGL
             ushort[] indexData = Enumerable.Range(0, 150).Select(i => (ushort)i).ToArray();
             fixed (ushort* dataPtr = indexData)
             {
-                ib.SetIndices(new IntPtr(dataPtr), IndexFormat.UInt16, 2, 150, 250);
+                ib.SetIndices(new IntPtr(dataPtr), IndexFormat.UInt16, 150, 250);
             }
             ushort[] returned = new ushort[indexData.Length + 250];
-            ib.GetData(returned, returned.Length * sizeof(ushort));
+            ib.GetData(returned);
 
             for (int i = 250; i < returned.Length; i++)
             {
